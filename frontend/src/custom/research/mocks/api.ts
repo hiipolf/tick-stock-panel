@@ -44,6 +44,20 @@ export interface ShortTermOverview {
   theme_heat: { theme_id: string; theme_name: string; max_board: number; limit_up_count: number; consecutive_count: number; heat_score: number }[]
   items: any[]
   ladder: any[]
+  /** v2.0c: /short-term-real 附带 include_ladder=true 时返回, 供前端 limit-ladder 卡片渲染.
+   *  v2.0k: 也用于合成"今日"history (count is_one_word per tier). */
+  ladder_raw?: {
+    as_of?: string
+    counts?: Record<string, number>
+    tiers?: Array<{
+      board: number
+      count: number
+      symbols: string[]
+      stocks?: Array<{ symbol: string; status?: string; is_one_word?: boolean; [k: string]: any }>
+      [k: string]: any
+    }>
+    [k: string]: any
+  }
   stats: {
     limit_up_total: number
     limit_down_total: number

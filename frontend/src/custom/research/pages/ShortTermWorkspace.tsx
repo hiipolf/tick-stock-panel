@@ -14,13 +14,17 @@
  *       + GET /short-term-history?days=20 (5 曲线时间轴)
  *   - mock:  短路版 MOCK_* (fallback / 离线 demo)
  *
- * P2 v2.0i (本轮) 变更:
+ * P2 v2.0i 变更:
  *   - 移除顶部右侧 "指定日期" + "历史天数" 双控件
  *   - 最近交易日卡片内的日期渲染为 DatePicker (回调 setAsOf)
  *   - 历史天数 select 移到图表 Legend (EmotionTimelineLegend.historyDays / onHistoryDaysChange)
  *   - limit-ladder 嵌入区通过 embedded prop 隐藏其原 DatePicker (统一由 IRP 顶部卡片控制 asOf)
+ *
+ * P2 v2.0k 变更:
+ *   - 策略: 日期优先 — apiQuery 拿到 trade_date 后立刻合成 1 天 history 让 LatestCard 渲染
+ *   - 之前 LatestCard gate 在 historyQuery.data (60 天 12-15s), 视觉上"上半页空下半页有数据"
  */
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { RefreshCw, Zap, Database, Activity, Loader2, AlertCircle, ExternalLink } from 'lucide-react'
@@ -118,6 +122,57 @@ export default function ShortTermWorkspace({ embedded = false }: Props = {}) {
   // max 限制到今日 (DatePicker 不让用户选未来日期)
   const todayStr = new Date().toISOString().slice(0, 10)
 
+  // v2.0k: 日期优先策略 — LatestCard 不等 historyQuery (60 天 12-15s) 也立即渲染.
+  // 合成今日 1 天 history: apiQuery.data 拿到日期 + 5 卡 stats 后, 立刻构造 1 天 per_day.
+  // 当 historyQuery.data 真正回来, 切到完整 60 天 (视觉无缝, 卡片里只显示最新一天).
+  // 缺 recovery 字段 (limit-ladder 不区分"翘板"), 暂用 0; is_one_word 从 ladder_raw.tiers
+  // .stocks[].is_one_word 跨梯队 count.
+  const historyForCard = useMemo<HistorySeries | null>(() => {
+    if (historyQuery.data) return historyQuery.data
+    if (!data) return null
+    const is_one_word_count =
+      data.ladder_raw?.tiers
+        ?.flatMap((t: any) => t.stocks || [])
+        ?.filter((s: any) => s.is_one_word === true).length ?? 0
+    return {
+      end_date: data.trade_date,
+      days: 1,
+      trading_days_returned: 1,
+      calendar_days_span: 1,
+      skipped_non_trading: 0,
+      dates: [data.trade_date],
+      series: {
+        limit_up: [data.stats.limit_up_total],
+        limit_down: [data.stats.limit_down_total],
+        broken: [data.stats.exploded_total],
+        failed: [0],
+        recovery: [0],
+        is_one_word: [is_one_word_count],
+        max_board: [data.stats.max_board],
+        limit_up_main: [0],
+        limit_up_star: [0],
+        limit_up_chinext: [0],
+        limit_up_bj: [0],
+      },
+      per_day: [{
+        date: data.trade_date,
+        limit_up: data.stats.limit_up_total,
+        limit_down: data.stats.limit_down_total,
+        broken: data.stats.exploded_total,
+        failed: 0,
+        recovery: 0,
+        is_one_word: is_one_word_count,
+        max_board: data.stats.max_board,
+        limit_up_main: 0,
+        limit_up_star: 0,
+        limit_up_chinext: 0,
+        limit_up_bj: 0,
+        ok: true,
+        is_trading_day: true,
+      }],
+    }
+  }, [data, historyQuery.data])
+
   return (
     <div className="flex h-full flex-col gap-4 p-6">
       {!embedded && (
@@ -190,13 +245,13 @@ export default function ShortTermWorkspace({ embedded = false }: Props = {}) {
          - DatePicker 同步驱动: /short-term-real, 历史查询, limit-ladder 嵌入
          - 顶部右侧原本的"指定日期"DatePicker + "历史天数"select 已删, 简化 header. */}
       <section>
-        {dataSource === 'mock' || !historyQuery.data ? (
+        {dataSource === 'mock' || !historyForCard ? (
           <div className="rounded-md border border-rose-500/20 bg-rose-500/5 p-3 text-xs text-muted">
-            最近交易日卡片 · 需实盘模式 + 历史数据
+            最近交易日卡片 · 正在拉取实盘…
           </div>
         ) : (
           <EmotionTimelineLatestCard
-            history={historyQuery.data}
+            history={historyForCard}
             selectedDate={asOf || null}
             onDateChange={setAsOf}
             maxDate={todayStr}
