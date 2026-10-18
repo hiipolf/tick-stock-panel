@@ -47,34 +47,37 @@ def _provider_with(monkeypatch, fixtures: dict) -> tuple[ClsProvider, _FakeClien
     return ClsProvider(), fake
 
 
-# 财联社实际响应结构 (vendor 启用前需用真实抓包替换)
+# 财联社响应结构 (字段名严格按 AxData 官方文档对齐 cls_stock_kline / cls_stock_timeline)
 SAMPLE_KLINE = {
     ("/quote/stock/kline", "002664"): {
         "data": [
             {
-                "time": "2024-01-15",
+                "trade_date": "20240115",  # YYYYMMDD 紧凑格式 (AxData 文档样例快照一致)
                 "open": 25.00, "high": 25.50, "low": 24.80, "close": 25.20,
-                "volume": 10_000_000,  # 股
+                "volume": 10_000_000,  # 假设股, ÷100 转手
                 "amount": 252_000_000.0,  # 元
-                "changePercent": 0.8,
+                "change": 0.20,            # 涨跌额 (AxData 字段)
+                "change_pct": 0.008,        # 小数制 0.008 = +0.8% (AxData 标准化)
             },
             {
-                "time": "2024-01-16",
+                "trade_date": "20240116",
                 "open": 25.20, "high": 26.00, "low": 25.10, "close": 25.80,
                 "volume": 12_000_000,
                 "amount": 310_000_000.0,
-                "changePercent": 2.38,
+                "change": 0.60,
+                "change_pct": 0.0238,
             },
         ]
     },
     ("/quote/stock/kline", "600519"): {
         "data": [
             {
-                "time": "2024-01-15",
+                "trade_date": "20240115",
                 "open": 1700.00, "high": 1720.00, "low": 1695.00, "close": 1715.00,
                 "volume": 2_000_000,
                 "amount": 3_420_000_000.0,
-                "changePercent": 0.88,
+                "change": 15.0,
+                "change_pct": 0.0088,
             },
         ]
     },
@@ -82,7 +85,7 @@ SAMPLE_KLINE = {
     # 边界: 缺字段 → 0 / None, 不报错不启发式补全
     ("/quote/stock/kline", "688888"): {
         "data": [
-            {"time": "2024-01-15", "open": 10.0, "close": 10.5},  # 缺 high/low/volume/amount
+            {"trade_date": "20240115", "open": 10.0, "close": 10.5},  # 缺 high/low/volume/amount
         ]
     },
 }
@@ -91,9 +94,11 @@ SAMPLE_TIMELINE = {
     ("/quote/stock/timeline", "002664"): {
         "data": [
             {"minute": "09:35", "last_price": 25.10, "open": 25.05, "high": 25.15,
-             "low": 25.00, "volume": 50_000, "amount": 1_255_000.0},
+             "low": 25.00, "pre_close": 25.00, "avg_price": 25.05,
+             "volume": 50_000, "amount": 1_255_000.0},
             {"minute": "09:36", "last_price": 25.15, "open": 25.10, "high": 25.20,
-             "low": 25.05, "volume": 45_000, "amount": 1_132_000.0},
+             "low": 25.05, "pre_close": 25.00, "avg_price": 25.10,
+             "volume": 45_000, "amount": 1_132_000.0},
         ]
     },
 }

@@ -16,9 +16,10 @@
     ...
     server.stop()
 
-mock 响应结构与真实 cls.cn 同款 (基于 AxData README 推断):
-  GET /quote/stock/kline?code=600519&type=day&limit=200
-  GET /quote/stock/timeline?code=600519
+mock 响应结构字段名严格按 AxData 官方文档对齐 (cls_stock_kline /
+cls_stock_timeline) — 不再"基于 README 推断". URL 路径 (path) 是 mock 占位
+(实际 cls.cn 路径待抓包确认), 但字段名 / 字段顺序 / 单位已对齐 AxData
+标准化结果 (amount=元, change_pct=小数制).
 
 支持标的 (跟团队常用测试集对齐):
   600519 (SH) / 000001 (SZ) / 002664 (SZ) / 300750 (SZ) /
@@ -58,7 +59,12 @@ SAMPLE_STOCKS: dict[str, dict[str, Any]] = {
 
 
 def _gen_kline(code: str, days: int = 30) -> list[dict[str, Any]]:
-    """生成 days 根日 K, 起点 (今天 - days, 终点 今天)。"""
+    """生成 days 根日 K, 起点 (今天 - days, 终点 今天)。
+
+    字段名严格按 AxData 文档 (cls_stock_kline) 对齐:
+      trade_date / open / high / low / close / volume / amount /
+      change (涨跌额) / change_pct (小数制涨跌幅).
+    """
     sample = SAMPLE_STOCKS.get(code, {
         "name": f"测试{code}", "last_close": 10.0, "avg_vol_shares": 5_000_000, "daily_chg_pct": 0.5,
     })
@@ -71,27 +77,36 @@ def _gen_kline(code: str, days: int = 30) -> list[dict[str, Any]]:
         # 跳周末 (粗略: 周六周日不交易)
         if d.weekday() >= 5:
             continue
-        chg = rng.uniform(-0.025, 0.030)  # ±2.5%/+3%
+        chg = rng.uniform(-0.025, 0.030)  # ±2.5%/+3% (小数制)
         open_p = close * (1 + rng.uniform(-0.005, 0.005))
+        prev_close = close
         close = round(close * (1 + chg), 2)
         high = round(max(open_p, close) * (1 + rng.uniform(0, 0.008)), 2)
         low = round(min(open_p, close) * (1 - rng.uniform(0, 0.008)), 2)
         vol = int(sample["avg_vol_shares"] * rng.uniform(0.6, 1.4))
         amt = round(vol * (open_p + close) / 2, 2)
+        # AxData 字段名: trade_date (YYYYMMDD 紧凑格式, 跟文档样例快照一致)
         bars.append({
-            "time": d.isoformat(),
+            "trade_date": d.strftime("%Y%m%d"),
             "open": open_p, "high": high, "low": low, "close": close,
             "volume": vol, "amount": amt,
-            "changePercent": round(chg * 100, 2),  # 百分数, vendor 测试断言透传
+            "change": round(close - prev_close, 2),       # 涨跌额
+            "change_pct": round(chg, 4),                  # 小数制 (AxData 标准化)
         })
     return bars
 
 
 def _gen_timeline(code: str) -> list[dict[str, Any]]:
-    """生成今日分时 (240 根, 9:30-11:30 + 13:00-15:00)。"""
+    """生成今日分时 (240 根, 9:30-11:30 + 13:00-15:00)。
+
+    字段名严格按 AxData 文档 (cls_stock_timeline):
+      minute / last_price / open / pre_close / avg_price /
+      volume / amount.
+    """
     sample = SAMPLE_STOCKS.get(code, {"last_close": 10.0, "avg_vol_shares": 1_000_000})
     rng = random.Random(f"{code}-timeline")
     price = sample["last_close"] * 0.998
+    pre_close = sample["last_close"]
     out = []
     # 上午: 9:30 - 11:30 (120 根 1m)
     for i in range(120):
@@ -106,6 +121,8 @@ def _gen_timeline(code: str) -> list[dict[str, Any]]:
             "open": round(price * 0.999, 2),
             "high": round(price * 1.001, 2),
             "low": round(price * 0.998, 2),
+            "pre_close": pre_close,
+            "avg_price": round(price * 1.0005, 2),
             "volume": int(sample["avg_vol_shares"] / 240 * rng.uniform(0.5, 1.5)),
             "amount": round(price * sample["avg_vol_shares"] / 240 * rng.uniform(0.5, 1.5), 2),
         })
@@ -120,6 +137,8 @@ def _gen_timeline(code: str) -> list[dict[str, Any]]:
             "open": round(price * 0.999, 2),
             "high": round(price * 1.001, 2),
             "low": round(price * 0.998, 2),
+            "pre_close": pre_close,
+            "avg_price": round(price * 1.0005, 2),
             "volume": int(sample["avg_vol_shares"] / 240 * rng.uniform(0.5, 1.5)),
             "amount": round(price * sample["avg_vol_shares"] / 240 * rng.uniform(0.5, 1.5), 2),
         })

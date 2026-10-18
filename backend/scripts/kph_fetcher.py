@@ -109,6 +109,15 @@ def normalize_symbol(code: str) -> str:
 
 
 def _limit_pool_schema() -> dict[str, Any]:
+    """字段名严格按 AxData 文档对齐 (kph_limit_up_history):
+      trade_date, instrument_id, symbol, exchange, name,
+      limit_time, open_time, seal_amount, seal_money,
+      limit_tag, limit_count, themes, reason,
+      net_inflow, turnover (成交额, 元), turnover_rate, market_cap,
+      industry_id, industry_limit_up_count.
+    注意 AxData 文档里 "amount" 字段指 "成交额", 这里按 AxData 字段
+    名写 turnover (cls 的 K 线 amt 在 AxData 叫 amount, KPH 叫 turnover).
+    """
     return {
         "symbol": pl.Utf8,
         "name": pl.Utf8,
@@ -119,9 +128,11 @@ def _limit_pool_schema() -> dict[str, Any]:
         "plate_name": pl.Utf8,
         "seal_amount": pl.Float64,
         "seal_money": pl.Float64,
+        "limit_tag": pl.Utf8,  # 新增: 连板标签 (AxData)
         "themes": pl.Utf8,
         "reason": pl.Utf8,
-        "amount": pl.Float64,
+        "net_inflow": pl.Float64,  # 新增: 净流入 (AxData, 元)
+        "turnover": pl.Float64,  # 成交额, 单位元 (AxData 字段名 turnover)
         "turnover_rate": pl.Float64,
         "market_cap": pl.Float64,
         "industry_id": pl.Utf8,
@@ -144,7 +155,7 @@ def fetch_limit_pool(client: KphClient, trade_date: date) -> pl.DataFrame:
     rows = []
     for item in (payload.get("data") or []):
         rows.append({
-            "symbol": normalize_symbol(item.get("code", "")),
+            "symbol": normalize_symbol(item.get("code", "") or item.get("symbol", "")),
             "name": item.get("name"),
             "trade_date": trade_date,
             "limit_count": item.get("limit_count"),
@@ -153,9 +164,11 @@ def fetch_limit_pool(client: KphClient, trade_date: date) -> pl.DataFrame:
             "plate_name": item.get("plate_name"),
             "seal_amount": item.get("seal_amount"),
             "seal_money": item.get("seal_money"),
+            "limit_tag": item.get("limit_tag"),
             "themes": item.get("themes"),
             "reason": item.get("reason"),
-            "amount": item.get("amount"),
+            "net_inflow": item.get("net_inflow"),
+            "turnover": item.get("turnover") or item.get("amount"),
             "turnover_rate": item.get("turnover_rate"),
             "market_cap": item.get("market_cap"),
             "industry_id": item.get("industry_id"),
@@ -192,14 +205,17 @@ def fetch_limit_ladder(client: KphClient, trade_date: date) -> pl.DataFrame:
     rows = []
     for item in (payload.get("data") or []):
         rows.append({
-            "symbol": normalize_symbol(item.get("code", "")),
+            "symbol": normalize_symbol(item.get("code", "") or item.get("symbol", "")),
             "name": item.get("name"),
             "trade_date": trade_date,
             "limit_count": item.get("limit_count"),
             "plate_id": item.get("plate_id"),
             "plate_name": item.get("plate_name"),
-            "is_one_word": item.get("one_word"),
-            "is_popular": item.get("popular"),
+            "one_word": item.get("one_word"),         # AxData 字段名 (原 is_one_word)
+            "popular": item.get("popular"),            # AxData 字段名 (原 is_popular)
+            "plate_limit_up_count": item.get("plate_limit_up_count"),  # AxData 新增
+            "amount": item.get("amount"),              # 板块级成交额 (AxData kph_limit_ladder)
+            "plate_amount": item.get("plate_amount"),  # 板块整体成交额 (AxData)
         })
     return pl.DataFrame(rows) if rows else pl.DataFrame()
 
@@ -286,15 +302,17 @@ def fetch_sector_constituents(client: KphClient, trade_date: date) -> pl.DataFra
                 "trade_date": trade_date,
                 "plate_id": plate_id,
                 "plate_name": sector.get("plate_name"),
-                "symbol": normalize_symbol(item.get("code", "")),
+                "symbol": normalize_symbol(item.get("code", "") or item.get("symbol", "")),
                 "name": item.get("name"),
                 "last_price": item.get("last_price"),
                 "change_pct": item.get("change_pct"),
-                "amount": item.get("amount"),
+                "amount": item.get("amount"),  # 板块级成交额 (AxData kph_sector_constituents_history)
                 "turnover_rate": item.get("turnover_rate"),
                 "float_market_value": item.get("float_market_value"),
                 "main_net": item.get("main_net"),
+                "tags": item.get("tags"),                # AxData 字段名 (原 themes)
                 "limit_tag": item.get("limit_tag"),
+                "rank_tag": item.get("rank_tag"),        # AxData 新增: 龙虎榜/龙头标签
                 "limit_count": item.get("limit_count"),
                 "_source": "kph.sector_constituents",
             })
@@ -319,6 +337,7 @@ def fetch_market_events(client: KphClient, trade_date: date) -> pl.DataFrame:
             "plate_id": item.get("plate_id"),
             "plate_name": item.get("plate_name"),
             "detail": item.get("detail"),
+            "raw_stock_list": item.get("raw_stock_list"),  # AxData 新增: 相关股票列表
             "_source": "kph.market_events",
         })
     return pl.DataFrame(rows) if rows else pl.DataFrame()

@@ -174,7 +174,13 @@ class ClsProvider:
         return pl.DataFrame(rows, schema=DAILY_SCHEMA)
 
     def _map_daily_bar(self, bare_code: str, bar: dict[str, Any]) -> dict[str, Any]:
-        raw_date = bar.get("time") or bar.get("date")
+        # 字段名严格按 AxData 文档 (cls_stock_kline.html) 对齐:
+        #   trade_date / open / high / low / close / volume / amount /
+        #   change (涨跌额) / change_pct (涨跌幅)
+        # volume 单位由 cls.cn 真实接口定 — AxData 文档未明确,
+        # 暂按 "股" 处理 (跟 fuyao/tdxquant 风格一致), ÷100 转手.
+        # 真实启用前必须用浏览器抓包核对单位.
+        raw_date = bar.get("trade_date")
         if isinstance(raw_date, str):
             if len(raw_date) == 8 and raw_date.isdigit():
                 d = date(int(raw_date[:4]), int(raw_date[4:6]), int(raw_date[6:8]))
@@ -238,9 +244,12 @@ class ClsProvider:
     def _map_minute_bar(self, bare_code: str, bar: dict[str, Any]) -> dict[str, Any]:
         """timeline 接口单根分钟 K → canonical dict。
 
-        兼容 minute 字段三种格式: "HH:MM" / "HH:MM:SS" / "YYYY-MM-DD HH:MM:SS"。
+        字段名严格按 AxData 文档 (cls_stock_timeline.html):
+          trade_date / minute / last_price / open / pre_close /
+          avg_price / volume / amount
+        minute 字段三种格式: "HH:MM" / "HH:MM:SS" / "YYYY-MM-DD HH:MM:SS"。
         """
-        minute_str = bar.get("minute") or bar.get("time")
+        minute_str = bar.get("minute")
         if minute_str:
             if " " in minute_str:
                 dt = datetime.fromisoformat(minute_str)
@@ -267,7 +276,7 @@ class ClsProvider:
             "open": _to_float(bar.get("open")) or 0.0,
             "high": _to_float(bar.get("high")) or 0.0,
             "low": _to_float(bar.get("low")) or 0.0,
-            "close": _to_float(bar.get("last_price") or bar.get("close")) or 0.0,
+            "close": _to_float(bar.get("last_price")) or 0.0,
             "volume": volume_lots,
             "amount": _to_float(bar.get("amount")),
         }

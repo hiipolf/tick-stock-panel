@@ -2,6 +2,8 @@
 # 数据集: [daily, minute] (CLS 个股 K 线 + 当日分时)
 # 运行依赖: httpx (后端默认依赖)
 # API Key: 无 (公开页面 API, 需节流)
+# 字段名严格按 AxData 文档 (cls_stock_kline / cls_stock_timeline) 对齐
+# 真实启用前需用浏览器抓包确认 BASE_URL 真实 host (AxData 文档未公开)
 
 name: cls
 display_name: "财联社 (cls.cn)"
@@ -9,7 +11,7 @@ runtime: python
 entry: app.plugins.cls.provider:ClsProvider
 check: app.plugins.cls.provider:availability
 datasets: [daily, minute]
-description: "财联社 24h 持牌财经通讯社. 个股日 K (cls_stock_kline) + 当日分时 (cls_stock_timeline). api3.cls.cn / quote.cls.cn 内部子域."
+description: "财联社 24h 持牌财经通讯社. 个股日 K (cls_stock_kline) + 当日分时 (cls_stock_timeline). 字段名按 AxData 文档对齐 (trade_date / change_pct / volume / amount). 真实 host 待抓包确认."
 usage_notes:
   - "日 K: 全市场一轮约 15-20 分钟 (节流 1.5s/请求, 约 5000 标的)"
   - "分时: 仅当日分时, 历史分时需付费 (不在本插件范围)"

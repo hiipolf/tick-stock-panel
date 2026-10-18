@@ -54,17 +54,23 @@ SAMPLE = {
                 "limit_count": 3, "limit_time": 1705301234000,
                 "plate_id": "BK1234", "plate_name": "新能源汽车",
                 "seal_amount": 100000.0, "seal_money": 5000000.0,
+                "limit_tag": "3连板",                  # AxData 新增
                 "themes": "新能源,汽车", "reason": "受益于销量增长超预期",
-                "amount": 200000000.0, "turnover_rate": 0.05,
+                "net_inflow": 5e6,                       # AxData 新增
+                "turnover": 200000000.0, "turnover_rate": 0.05,  # AxData: 成交额=turnover
                 "market_cap": 1000000000.0,
+                "industry_id": "BK1234",                 # AxData
+                "industry_limit_up_count": 5,            # AxData
             },
             {
                 "code": "600519", "name": "贵州茅台",
                 "limit_count": 1, "limit_time": 1705301234000,
                 "plate_id": "BK5678", "plate_name": "白酒",
                 "seal_amount": 50000.0, "seal_money": 8000000.0,
+                "limit_tag": "首板",
                 "themes": "白酒,消费", "reason": "高端白酒旺季提价",
-                "amount": 500000000.0, "turnover_rate": 0.02,
+                "net_inflow": 1e7,
+                "turnover": 500000000.0, "turnover_rate": 0.02,
                 "market_cap": 2000000000.0,
             },
         ]
@@ -82,10 +88,14 @@ SAMPLE = {
         "data": [
             {"code": "002664", "name": "长城汽车", "limit_count": 3,
              "plate_id": "BK1234", "plate_name": "新能源汽车",
-             "one_word": False, "popular": True},
+             "one_word": False, "popular": True,
+             "plate_limit_up_count": 5,                # AxData 新增
+             "amount": 1.2e9, "plate_amount": 5e10},   # AxData
             {"code": "600519", "name": "贵州茅台", "limit_count": 1,
              "plate_id": "BK5678", "plate_name": "白酒",
-             "one_word": True, "popular": False},
+             "one_word": True, "popular": False,
+             "plate_limit_up_count": 1,
+             "amount": 8e8, "plate_amount": 2e10},
         ]
     },
     "/api/market-emotion": {
@@ -113,7 +123,9 @@ SAMPLE = {
             {"code": "002664", "name": "长城汽车",
              "last_price": 25.5, "change_pct": 0.10, "amount": 1e9,
              "turnover_rate": 0.05, "float_market_value": 5e10,
-             "main_net": 1e8, "limit_tag": "3连板", "limit_count": 3},
+             "main_net": 1e8, "tags": "新能源,锂电池",    # AxData 字段名 (原 themes)
+             "limit_tag": "3连板", "rank_tag": "龙头",   # AxData 新增
+             "limit_count": 3},
         ]
     },
     "/api/market/events": {
@@ -121,7 +133,8 @@ SAMPLE = {
             {"event_time": 1705301234000, "tag_id": 1,
              "tag_name": "板块异动", "tag_attribute": 1,
              "plate_id": "BK1234", "plate_name": "新能源汽车",
-             "detail": "新能源汽车板块涨幅超 5%"},
+             "detail": "新能源汽车板块涨幅超 5%",
+             "raw_stock_list": "002664,300750"},     # AxData 新增
         ]
     },
 }
@@ -216,7 +229,7 @@ class TestLadderAndEmotion:
         df = fetch_limit_ladder(client, date(2024, 1, 15))
         assert df.height == 2
         assert df["limit_count"][0] == 3
-        assert df["is_one_word"][1] is True  # 600519 是一字板
+        assert df["one_word"][1] is True  # 600519 是一字板 (AxData 字段名)
 
     def test_market_emotion_shape(self):
         client = _FakeKphClient(SAMPLE)

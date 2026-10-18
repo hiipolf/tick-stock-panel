@@ -70,7 +70,7 @@ class TestE2EKline:
         assert len(symbols) == 4
 
     def test_daily_unit_conversion_end_to_end(self, provider):
-        """端到端 unit 验证: volume 股 → 手 (÷100), changePercent 透传为小数制."""
+        """端到端 unit 验证: volume 股 → 手 (÷100), change_pct 透传为小数制 (AxData 标准化)."""
         df = provider.get_daily(["600519.SH"], "2024-01-01", "2030-12-31")
         # 贵州茅台日成交量典型 1.2M 股 → 12K 手
         vol_lots = df["volume"].to_list()
@@ -158,8 +158,8 @@ class TestMockServerItself:
         data = r.json()["data"]
         assert len(data) > 0
         first = data[0]
-        # 字段名跟 vendor cls plugin 的 _map_daily_bar 对齐
-        assert {"time", "open", "high", "low", "close", "volume", "amount", "changePercent"} <= set(first.keys())
+        # 字段名严格按 AxData 文档 (cls_stock_kline) 对齐
+        assert {"trade_date", "open", "high", "low", "close", "volume", "amount", "change_pct"} <= set(first.keys())
 
     def test_timeline_endpoint_shape(self, mock_server):
         import httpx
