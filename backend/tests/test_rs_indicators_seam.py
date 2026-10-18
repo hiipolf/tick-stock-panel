@@ -61,8 +61,11 @@ def test_sum_close_appends_column_with_correct_value():
     assert isinstance(out, pl.DataFrame)
     assert "sum_close" in out.columns, f"expected `sum_close` column, got {out.columns}"
     val = out.get_column("sum_close")
-    assert len(val) == 1, f"sum_close should be 1-row scalar, got {len(val)}"
-    assert val[0] == pytest.approx(10.0)
+    # Hello-world: `sum_close` is a scalar broadcast across all input rows.
+    # Polars auto-broadcasts 1-element columns to match DataFrame height.
+    assert len(val) == df.height, f"sum_close should match input height, got {len(val)}"
+    expected = [10.0] * df.height  # 1+2+3+4
+    assert val.to_list() == expected, f"sum_close values {val.to_list()} != {expected}"
 
 
 def test_sum_close_preserves_existing_columns():
