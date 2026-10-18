@@ -775,13 +775,23 @@ function tierLabel(n: number, direction: Direction): string {
 
 // ===== 梯队总览条 =====
 
-function OverviewBar({ tiers, dateValue, onDateChange, filterKeys, bf, direction }: {
+function OverviewBar({
+  tiers,
+  dateValue,
+  onDateChange,
+  filterKeys,
+  bf,
+  direction,
+  embedded = false,
+}: {
   tiers: LimitLadderTier[]
   dateValue: string
   onDateChange: (v: string) => void
   filterKeys: Set<FilterKey>
   bf?: BrokenFailedConfig
   direction: Direction
+  /** 嵌入模式: 不渲染 DatePicker (日期由父容器控制) */
+  embedded?: boolean
 }) {
   if (tiers.length === 0) return null
   const cfg = { ...DEFAULT_BF, ...bf }
@@ -824,9 +834,12 @@ function OverviewBar({ tiers, dateValue, onDateChange, filterKeys, bf, direction
           <span className="text-yellow-500 font-medium">{failedLabel} {totalFailed}</span>
         )}
       </div>
-      <div className="ml-auto">
-        <DatePicker value={dateValue} onChange={onDateChange} />
-      </div>
+      {/* embedded 模式隐藏 DatePicker: 日期由父容器 (IRP 最近交易日) 统一控制 */}
+      {!embedded && (
+        <div className="ml-auto">
+          <DatePicker value={dateValue} onChange={onDateChange} />
+        </div>
+      )}
     </div>
   )
 }
@@ -1459,8 +1472,24 @@ function ExtConfigDialog({ fields, onSave, onClose }: {
 
 // ===== 主页面 =====
 
-export function LimitUpLadder() {
-  const [asOf, setAsOf] = useState('')
+export function LimitUpLadder({
+  embedded = false,
+  asOf: externalAsOf,
+  onAsOfChange,
+}: {
+  /** 嵌入模式: 跳过 PageHeader, 让父容器接管布局 */
+  embedded?: boolean
+  /** 外部控制的日期 (YYYY-MM-DD); 不传则内部自有状态 */
+  asOf?: string
+  /** 日期变更回调 (受控模式) */
+  onAsOfChange?: (next: string) => void
+} = {}) {
+  const [internalAsOf, setInternalAsOf] = useState('')
+  const asOf = externalAsOf ?? internalAsOf
+  const setAsOf = (next: string) => {
+    if (onAsOfChange) onAsOfChange(next)
+    if (externalAsOf === undefined) setInternalAsOf(next)
+  }
   const [direction, setDirection] = useState<Direction>(() => storage.limitLadderDirection.get('up'))
   const [sealMode, setSealMode] = useState<'vol' | 'amount'>(() => storage.limitLadderSealMode.get('vol'))
   const [filterKeys, setFilterKeys] = useState<Set<FilterKey>>(loadFilterKeys)
@@ -1628,8 +1657,9 @@ export function LimitUpLadder() {
   }
 
   return (
-    <div className="flex flex-col h-full">
-      <PageHeader
+    <div className={`flex flex-col ${embedded ? '' : 'h-full'}`}>
+      {!embedded ? (
+        <PageHeader
         title={direction === 'down' ? '连跌梯队' : '连板梯队'}
         titleExtra={
           <div className="flex items-center gap-2">
@@ -1771,9 +1801,157 @@ export function LimitUpLadder() {
           </div>
         }
       />
+      ) : (
+        /* embedded 模式: 紧凑 inline toolbar, 保留 limit-ladder 全部能力, 让 IRP 容器接管页面布局 */
+        <div className="mb-3 flex flex-wrap items-center gap-1 rounded-md border border-border bg-surface px-2 py-1.5">
+          <SealedBadge
+            degraded={sealedDegrade.degraded}
+            hasDepth={sealedDegrade.hasDepth}
+            isHistorical={sealedDegrade.isHistorical}
+            sealedReady={data?.sealed_ready}
+            sealedCountsUp={data?.sealed_counts_up}
+            sealedCountsDown={data?.sealed_counts_down}
+            rawUp={data?.counts_raw?.up}
+            rawDown={data?.counts_raw?.down}
+          />
+          {/* 涨跌停切换 */}
+          <div className="flex items-center rounded-full bg-elevated/60 p-0.5">
+            <button
+              onClick={() => direction !== 'up' && toggleDirection('up')}
+              className={`flex items-center gap-1 px-2.5 h-7 rounded-full text-xs tabular-nums transition-all ${
+                direction === 'up'
+                  ? 'bg-bull/15 text-bull font-semibold'
+                  : 'text-muted hover:text-bull/70'
+              }`}
+            >
+              <span>涨停</span>
+              <span>{data?.counts?.up ?? 0}</span>
+            </button>
+            <button
+              onClick={() => direction !== 'down' && toggleDirection('down')}
+              className={`flex items-center gap-1 px-2.5 h-7 rounded-full text-xs tabular-nums transition-all ${
+                direction === 'down'
+                  ? 'bg-bear/15 text-bear font-semibold'
+                  : 'text-muted hover:text-bear/70'
+              }`}
+            >
+              <span>跌停</span>
+              <span>{data?.counts?.down ?? 0}</span>
+            </button>
+          </div>
 
-      {/* 总览条 + 日期 */}
-      <OverviewBar tiers={tiers} dateValue={dateValue} onDateChange={setAsOf} filterKeys={filterKeys} bf={extFields.bf} direction={direction} />
+          {/* 封单模式 (仅 sealed_ready) */}
+          {data?.sealed_ready && (
+            <>
+              <div className="w-px h-4 bg-border mx-1" />
+              <div className="flex items-center rounded-full bg-elevated/60 p-0.5">
+                {(['vol', 'amount'] as const).map(m => (
+                  <button
+                    key={m}
+                    onClick={() => {
+                      setSealMode(m)
+                      storage.limitLadderSealMode.set(m)
+                    }}
+                    className={`flex items-center px-2 py-1 rounded-full text-xs transition-all ${
+                      sealMode === m
+                        ? 'bg-accent/15 text-accent font-medium'
+                        : 'text-muted hover:text-secondary'
+                    }`}
+                  >
+                    {m === 'vol' ? '封单量' : '封单额'}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
+          <div className="w-px h-4 bg-border mx-1" />
+
+          {/* 状态筛选 */}
+          {statusTabs(direction).map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => toggleFilter(tab.key)}
+              className={`px-2 py-1 text-xs transition-colors ${
+                filterKeys.has(tab.key)
+                  ? 'bg-accent/15 text-accent font-medium'
+                  : 'text-secondary hover:text-foreground hover:bg-surface'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+
+          <div className="w-px h-4 bg-border mx-1" />
+
+          {/* 概念 / 行业 显示开关 */}
+          <button
+            onClick={toggleConcept}
+            className={`px-2 py-1 text-xs transition-colors ${
+              showConcept
+                ? 'bg-yellow-500/15 text-yellow-400 font-medium'
+                : 'text-secondary hover:text-foreground hover:bg-surface'
+            }`}
+          >
+            概念
+          </button>
+          <button
+            onClick={toggleIndustry}
+            className={`px-2 py-1 text-xs transition-colors ${
+              showIndustry
+                ? 'bg-blue-500/15 text-blue-400 font-medium'
+                : 'text-secondary hover:text-foreground hover:bg-surface'
+            }`}
+          >
+            行业
+          </button>
+
+          <div className="w-px h-4 bg-border mx-1" />
+
+          {/* 板块筛选 */}
+          {BOARD_TABS.map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => toggleFilter(tab.key)}
+              className={`px-2 py-1 text-xs transition-colors ${
+                filterKeys.has(tab.key)
+                  ? 'bg-accent/15 text-accent font-medium'
+                  : 'text-secondary hover:text-foreground hover:bg-surface'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+
+          <div className="w-px h-4 bg-border mx-1" />
+
+          <button
+            onClick={() => setShowExtConfig(true)}
+            className="p-1.5 hover:bg-surface text-muted hover:text-accent"
+            title="ext 字段配置"
+          >
+            <Settings2 className="h-3.5 w-3.5" />
+          </button>
+          <button
+            onClick={() => refetch()}
+            disabled={isFetching}
+            className="p-1.5 hover:bg-surface text-muted disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
+      )}
+
+      {/* 总览条 + 日期 (embedded 模式不渲染 DatePicker, 日期由父容器 IRP 统一控制) */}
+      <OverviewBar
+        tiers={tiers}
+        dateValue={dateValue}
+        onDateChange={setAsOf}
+        filterKeys={filterKeys}
+        bf={extFields.bf}
+        direction={direction}
+        embedded={embedded}
+      />
 
       {/* 概念统计 */}
       {(extFields.showConceptStats ?? true) && (
