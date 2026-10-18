@@ -32,9 +32,12 @@ pub fn sum_close(df: PyDataFrame) -> PyResult<PyDataFrame> {
     };
 
     // 3. Append the result as a 1-element f64 column named `sum_close`.
+    // Polars 0.55+ migrated `DataFrame::with_column` from `Series` to `Column`
+    // (the new opaque data type). Convert via `.into_column()` — Series retains
+    // its dtype/values, just wraps in a Column.
     let scalar = Series::new("sum_close".into(), vec![total]);
     owned
-        .with_column(scalar)
+        .with_column(scalar.into_column())
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(
             format!("failed to append 'sum_close': {e}")))?;
 
