@@ -118,6 +118,7 @@ crates/**/target/
 **/Cargo.toml.orig
 **/Cargo.lock.bak
 .maturin-cache/
+.verify-logs/   # local Rust verify logs (cargo check / test / build output)
 
 # PyO3 build artefacts and intermediate object files
 *.pyd

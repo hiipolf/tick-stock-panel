@@ -45,3 +45,26 @@ codegen-units = 1
 [profile.dev]
 opt-level = 0
 debug     = true
+
+# === Vendored polars 0.55.2 patches (TF-RS-1) ===
+# ADR-0003 — the upstream polars-ops / polars-mem-engine / polars-stream
+# 0.55.2 release ships non-exhaustive `match` expressions gated behind
+# feature flags (`python`, `object`) that the crate's OWN default
+# feature set does NOT enable. The 5-mismatch pattern forces a
+# workspace that uses `pyo3-polars` (no `polars` `python` feature)
+# to either:
+#   (a) hit E0004 at every compile, or
+#   (b) carry cargo cache source patches that don't survive `cargo clean`.
+#
+# Vendoring the three affected crates (path-based [patch.crates-io])
+# makes the fix durable — it lives in this repo's git, not in the
+# global cargo cache. When polars-ops / polars-mem-engine / polars-stream
+# ship 0.55.3+ with the upstream match bugs fixed, delete the
+# `vendor/<name>/` directories and this section in one commit.
+#
+# Do not hand-edit files in `vendor/` without keeping the TF-RS-1
+# comment markers in sync with the comment block in this section.
+[patch.crates-io]
+polars-ops        = { path = "vendor/polars-ops" }
+polars-mem-engine = { path = "vendor/polars-mem-engine" }
+polars-stream     = { path = "vendor/polars-stream" }
