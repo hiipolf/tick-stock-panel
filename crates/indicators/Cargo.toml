@@ -1,0 +1,24 @@
+[package]
+name                = "tf-rs-indicators"
+version             = "0.0.0"
+edition.workspace   = true
+rust-version.workspace = true
+license.workspace   = true
+publish             = false
+
+[lib]
+# `cdylib` so maturin produces a Python extension module.
+# The exported symbol name `tf_rs_indicators` matches `#[pymodule] fn tf_rs_indicators`
+# in src/lib.rs and the Python-side import path used in
+# backend/app/indicators/pipeline.py (try-import fallback, ADR-0002 §5).
+name       = "tf_rs_indicators"
+crate-type = ["cdylib"]
+
+[dependencies]
+tf-rs-shared  = { path = "../shared" }
+polars        = { workspace = true }
+pyo3          = { workspace = true }
+pyo3-polars   = { workspace = true }
+
+[lints]
+workspace = true

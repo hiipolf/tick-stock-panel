@@ -109,3 +109,19 @@ TickFlowStockPanel.app/
 TickFlowStockPanel-macos*.dmg
 TickFlowStockPanel-macos*.zip
 reports/cursor_tickflow_pro_rate_limit_p0.bundle
+
+# ===== Rust kernel — Path A (ADR-0002) =====
+# Cargo target dirs are per-crate; commit Cargo.lock itself (ADR §6) but
+# ignore everything that comes out of a build run.
+crates/**/target/
+**/*.rs.bk
+**/Cargo.toml.orig
+**/Cargo.lock.bak
+.maturin-cache/
+
+# PyO3 build artefacts and intermediate object files
+*.pyd
+*.dll
+*.so
+# (the *.so rule above is already in the Python block; this section only
+#  keeps Rust-specific entries grouped together for future maintenance.)

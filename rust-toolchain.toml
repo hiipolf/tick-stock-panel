@@ -1,0 +1,7 @@
+[toolchain]
+# Pin exact stable toolchain. Required: polars 0.55.2 + pyo3-polars 0.28.0
+# pull in sysinfo 0.39 which needs rustc >= 1.95; 1.98.1 is the local
+# reproducibly-known-good version (matches host install).
+channel    = "1.98.1"
+components = ["rustfmt", "clippy"]
+profile    = "minimal"

@@ -1,0 +1,16 @@
+[package]
+name                = "tf-rs-factors"
+version             = "0.0.0"
+edition.workspace   = true
+rust-version.workspace = true
+license.workspace   = true
+publish             = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+tf-rs-shared = { path = "../shared" }
+
+[lints]
+workspace = true

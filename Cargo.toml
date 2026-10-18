@@ -1,0 +1,44 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/indicators",
+    "crates/shared",
+    "crates/factors",
+    "crates/signals",
+]
+
+[workspace.package]
+edition      = "2021"
+rust-version = "1.98.1"
+license      = "MIT"
+authors      = ["TickFlow Kernel Team <kernel@local>"]
+
+# === Workspace dependency pin (ADR-0002) ===
+# Pinned absolutely (not range-pinned) to lock ABI across pyO3/polars re-roll.
+# Upgrade path: bump + re-stress + new ADR — never silent update.
+[workspace.dependencies]
+polars              = { version = "=0.55.2", features = ["python", "lazy", "parquet", "csv"] }
+pyo3                = { version = "=0.29",   features = ["extension-module", "abi3-py310"] }
+pyo3-polars         = { version = "=0.28.0", features = ["derive"] }
+pyo3-polars-derive  = "=0.22.0"
+
+# === Lints ===
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+# PyO3 #[pyclass] / #[pyfunction] expand to unsafe internally; keep
+# `unsafe_code` at warn rather than deny — only lib.rs explicit unsafe
+# surface should raise alarms.
+[workspace.lints.rust]
+unsafe_code = "warn"
+
+# === Profiles ===
+# maturin + pyo3-polars want LTO + codegen-units=1 for stable ABI
+# across rebuilds (matches Hivebook 2026-09 canonical setup).
+[profile.release]
+opt-level     = 3
+lto           = "thin"
+codegen-units = 1
+
+[profile.dev]
+opt-level = 0
+debug     = true
