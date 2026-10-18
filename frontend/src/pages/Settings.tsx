@@ -6,7 +6,7 @@
 import { Suspense, lazy, useState, type ComponentType } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { BarChart3, Database, KeyRound, Package, Radio, SlidersHorizontal, Sparkles, Settings2, PanelLeftClose, PanelLeftOpen, Clock3, Info } from 'lucide-react'
+import { BarChart3, Database, HardDrive, KeyRound, Package, Radio, SlidersHorizontal, Sparkles, Settings2, PanelLeftClose, PanelLeftOpen, Clock3, Info } from 'lucide-react'
 // 面板按 tab 按需加载: 8 个面板源码 270KB+, 同步打包会让设置页 chunk 膨胀
 const SettingsAIPanel = lazy(() => import('./settings/AI').then(m => ({ default: m.SettingsAIPanel })))
 const SettingsApiTokensPanel = lazy(() => import('./settings/ApiTokens').then(m => ({ default: m.SettingsApiTokensPanel })))
@@ -18,6 +18,7 @@ const SettingsTimeoutPanel = lazy(() => import('./settings/Timeout').then(m => (
 const SettingsSystemPanel = lazy(() => import('./settings/System').then(m => ({ default: m.SettingsSystemPanel })))
 const SettingsAboutPanel = lazy(() => import('./settings/About').then(m => ({ default: m.SettingsAboutPanel })))
 const SettingsDataSourcesPanel = lazy(() => import('./settings/DataSources').then(m => ({ default: m.SettingsDataSourcesPanel })))
+const SettingsDataStoragePanel = lazy(() => import('./settings/DataStorage').then(m => ({ default: m.SettingsDataStoragePanel })))
 import { PageHeader } from '@/components/PageHeader'
 import { cn } from '@/lib/cn'
 
@@ -33,6 +34,7 @@ type TabDef = {
 
 const TABS: readonly TabDef[] = [
   { key: 'data-sources', label: '数据源',     icon: Database,  panel: SettingsDataSourcesPanel },
+  { key: 'data-storage', label: '数据存储',    icon: HardDrive, panel: SettingsDataStoragePanel },
   { key: 'ai',         label: 'AI 设置',    icon: Sparkles,  panel: SettingsAIPanel },
   { key: 'monitoring', label: '实时监控',   icon: Radio,     panel: SettingsMonitoringPanel },
   { key: 'ext-pages',  label: '扩展页面',   icon: BarChart3, panel: SettingsExtPagesPanel },
