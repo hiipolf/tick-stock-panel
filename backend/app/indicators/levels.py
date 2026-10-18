@@ -59,10 +59,10 @@ LEVEL_TYPES = {
 # 1. 压力位 / 支撑位 —— 成交量分布 (Volume Profile)
 # ================================================================
 
-def _support_resistance(df: pl.DataFrame, bins: int = 40) -> list[dict]:
-    """筹码分布(换手率衰减模型) —— 国内主流 A 股支撑/压力位算法。
+def _py_support_resistance(df: pl.DataFrame, bins: int = 40) -> list[dict]:
+    """筹码分布(换手率衰减模型) —— 国内主流 A 股支撑/压力位算法 (pure-Python ref)。
 
-    算法依据:大智慧/同花顺/通达信"筹码分布"专利模型(CN109711994A),物理含义是
+    Algorithm依据:大智慧/同花顺/通达信"筹码分布"专利模型(CN109711994A),物理含义是
     "当前各价位还剩多少筹码(持仓成本分布)",而非海外 Volume Profile 的"历史成交
     堆积"。两者关键区别在于衰减方式:
       - 海外 VP: 无衰减, 历史成交永远累加(反映"曾经在哪换过手")
@@ -82,9 +82,8 @@ def _support_resistance(df: pl.DataFrame, bins: int = 40) -> list[dict]:
     成交量按 high~low 价格区间分摊到桶(而非全归 (high+low)/2 中点), 振幅大的 K 线
     不再污染中点价, 更接近真实成交分布。
 
-    密集区输出:
-      - POC(控制点):当前筹码量最大的桶(=最多人持仓的成本区), strong
-      - 其他高筹码区:高于均值, medium, 最多 2 个
+    Note: 1:1 Rust port lives at `crates/indicators/src/levels.rs`. The reduce
+    step (POC + 2 dense zones) is shared via `_reduce_to_poc_and_dense`.
     """
     if df.is_empty() or "volume" not in df.columns or df.height < 20:
         return []
@@ -136,7 +135,23 @@ def _support_resistance(df: pl.DataFrame, bins: int = 40) -> list[dict]:
             for k in range(k_low, k_high + 1):
                 chips[k] += share
 
-    # 只保留有筹码的桶
+    close = float(df.tail(1)["close"][0])
+    return _reduce_to_poc_and_dense(chips, edges, close)
+
+
+def _reduce_to_poc_and_dense(
+    chips: list[float], edges: list[float], close: float
+) -> list[dict]:
+    """Reduce a 1-D chip distribution to POC + up to 2 dense-zone dicts.
+
+    Shared between the pure-Python reference path (`_py_support_resistance`) and
+    the Rust-kernel path (`_support_resistance`). Operates on a per-row
+    `chips` array of length `bins`; bin midpoints are recovered from `edges`.
+
+    Output keys: `value` (rounded to 2 dp), `label`, `type="sr"`, `side`,
+    `strength`. Mirrors the original `_support_resistance` lines 139-165.
+    """
+    bins = len(chips)
     bin_ids = [k for k in range(bins) if chips[k] > 0]
     if not bin_ids:
         return []
@@ -145,8 +160,6 @@ def _support_resistance(df: pl.DataFrame, bins: int = 40) -> list[dict]:
 
     def bin_mid(bin_id: int) -> float:
         return (edges[bin_id] + edges[bin_id + 1]) / 2
-
-    close = float(df.tail(1)["close"][0])
 
     out: list[dict] = []
     # POC: 当前筹码量最大的桶(最多人持仓的成本区)
@@ -163,6 +176,46 @@ def _support_resistance(df: pl.DataFrame, bins: int = 40) -> list[dict]:
         out.append({"value": round(mid, 2), "label": "成交密集区",
                     "type": "sr", "side": _side(mid, close), "strength": "medium"})
     return out
+
+
+def _support_resistance(df: pl.DataFrame, bins: int = 40) -> list[dict]:
+    """筹码分布 —— thin adapter (try Rust kernel, fall back to pure-Python).
+
+    Seam contract (Spec 0001, Ticket 03): the public signature is unchanged
+    so all 7 callers in `app/api/levels.py`, `app/stock_analysis.py`, and the
+    chart components stay untouched. On a machine with the `tf_rs_indicators`
+    wheel installed (`uv sync --extra rs && maturin develop --release`), this
+    function dispatches to the Rust kernel. Otherwise it falls back to the
+    pure-Python reference for graceful degradation on bare-bones CI.
+    """
+    try:
+        from tf_rs_indicators import support_resistance as _rs_support_resistance
+    except ImportError:
+        return _py_support_resistance(df, bins)
+
+    out_df = _rs_support_resistance(df, bins)
+    chip_col = out_df.get_column("chip_pct")
+    # No-op branch from the kernel: `chip_pct` column is all nulls.
+    if chip_col.null_count() == chip_col.len():
+        return []
+    # Main path: 1-row broadcast List<Float64>. Each row's list is the final
+    # chips array. Polars auto-broadcasts, so `to_list()[-1]` recovers it.
+    chip_lists = chip_col.to_list()
+    if not chip_lists or chip_lists[-1] is None:
+        return []
+    final_chips = list(chip_lists[-1])
+    if len(final_chips) != bins:
+        return []
+
+    # Re-derive bin edges on the Python side (the kernel does not return them).
+    hi = float(df["high"].max())
+    lo = float(df["low"].min())
+    if not (hi > lo > 0):
+        return []
+    step = (hi - lo) / bins
+    edges = [lo + i * step for i in range(bins + 1)]
+    close = float(df.tail(1)["close"][0])
+    return _reduce_to_poc_and_dense(final_chips, edges, close)
 
 
 # ================================================================

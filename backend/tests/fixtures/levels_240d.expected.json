@@ -1,0 +1,23 @@
+[
+  {
+    "value": 1310.09,
+    "label": "成交密集区(POC)",
+    "type": "sr",
+    "side": "support",
+    "strength": "strong"
+  },
+  {
+    "value": 94.53,
+    "label": "成交密集区",
+    "type": "sr",
+    "side": "support",
+    "strength": "medium"
+  },
+  {
+    "value": 268.19,
+    "label": "成交密集区",
+    "type": "sr",
+    "side": "support",
+    "strength": "medium"
+  }
+]
