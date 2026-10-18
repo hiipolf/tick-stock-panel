@@ -43,13 +43,14 @@ profile    = "minimal"
 workspace `[workspace.dependencies]` 形如下(精确锁定,不锁范围):
 
 ```toml
-polars              = { version = "=0.55.2", features = ["python", "lazy", "parquet", "csv"] }
+polars              = { version = "=0.55.2", features = ["lazy", "parquet", "csv"] }
 pyo3                = { version = "=0.29",   features = ["extension-module", "abi3-py310"] }
 pyo3-polars         = { version = "=0.28.0", features = ["derive"] }
 pyo3-polars-derive  = "=0.22.0"
 ```
 
 - 不开 `simd` / `nightly` / `performant`(staging 后视性能数据再开)
+- **不要给 `polars` crate 加 `python` feature** —— Python 集成走 `pyo3-polars`(其与 polars 同版本号绑定)。Hivebook 2026-09-23 实证表明 polars crate 的 features 列表里**没有** `python`,加了触发 dep resolution 失败。
 - `polars = "=0.55.2"` 不是范围锁:是绝对 pin。后续升级要走标准 ADR 流程,不静默 bump
 
 ### 4. 测试矩阵(决策 Q8=b)

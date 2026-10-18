@@ -16,8 +16,11 @@ authors      = ["TickFlow Kernel Team <kernel@local>"]
 # === Workspace dependency pin (ADR-0002) ===
 # Pinned absolutely (not range-pinned) to lock ABI across pyO3/polars re-roll.
 # Upgrade path: bump + re-stress + new ADR — never silent update.
+# IMPORTANT: `polars` Rust crate does NOT expose a `python` feature — the
+# Python integration lives in `pyo3-polars` (which re-exports `PyDataFrame`
+# tied to this exact polars version). Hivebook 2026-09 sample confirms.
 [workspace.dependencies]
-polars              = { version = "=0.55.2", features = ["python", "lazy", "parquet", "csv"] }
+polars              = { version = "=0.55.2", features = ["lazy", "parquet", "csv"] }
 pyo3                = { version = "=0.29",   features = ["extension-module", "abi3-py310"] }
 pyo3-polars         = { version = "=0.28.0", features = ["derive"] }
 pyo3-polars-derive  = "=0.22.0"
