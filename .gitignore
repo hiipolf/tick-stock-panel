@@ -118,7 +118,9 @@ crates/**/target/
 **/Cargo.toml.orig
 **/Cargo.lock.bak
 .maturin-cache/
-.verify-logs/   # local Rust verify logs (cargo check / test / build output)
+
+# local Rust verify logs (cargo check / test / build output)
+.verify-logs/
 
 # PyO3 build artefacts and intermediate object files
 *.pyd
@@ -126,3 +128,6 @@ crates/**/target/
 *.so
 # (the *.so rule above is already in the Python block; this section only
 #  keeps Rust-specific entries grouped together for future maintenance.)
+
+# local feature-scratch + to-tickets outputs (mattpocock-skills convention)
+.scratch
