@@ -85,8 +85,13 @@ pub fn support_resistance_inner(df: &DataFrame, bins: u32) -> PolarsResult<DataF
         }
         let v = vol_v[i].unwrap_or(0.0);
         if v > 0.0 {
-            let lo_i = low_v[i].unwrap_or(lo);
-            let hi_i = high_v[i].unwrap_or(lo);
+            // 1:1 port of `levels.py:127-128`: Python's `(None - lo) / step`
+            // raises `TypeError`. Surface nulls as a panic so PyO3 converts
+            // to a clear `pyo3::PanicException` rather than silently mapping
+            // null OHLC to bin 0 (which would diverge from the Python
+            // semantics the spec mandates as "1:1 port").
+            let lo_i = low_v[i].expect("null `low` at row — Python raises TypeError");
+            let hi_i = high_v[i].expect("null `high` at row — Python raises TypeError");
             let k_low = bin_index(lo_i, lo, step, bins_us);
             let k_high = bin_index(hi_i, lo, step, bins_us);
             let (k_low, k_high) = if k_low > k_high {
@@ -126,7 +131,12 @@ fn append_null_chips(df: &mut DataFrame, n: usize) -> PolarsResult<DataFrame> {
 
 #[inline]
 fn bin_index(price: f64, lo: f64, step: f64, bins: usize) -> usize {
-    let raw = ((price - lo) / step).floor() as i64;
+    // 1:1 port of `levels.py:127-128`: Python's `int((price - lo) / step)`
+    // truncates toward zero. Rust's `as i64` on a positive f64 does the same.
+    // `.floor()` would round -0.5 to -1; the next `.clamp(0, bins-1)` catches
+    // both for valid A-share data, but the spec mandates 1:1 semantics so we
+    // use truncation. See research note §6.1 for the gotcha.
+    let raw = ((price - lo) / step) as i64;
     raw.clamp(0, (bins as i64) - 1) as usize
 }
 
@@ -148,7 +158,10 @@ mod tests {
     /// volume=100, turnover=0`. Hand-computed expected chips:
     ///
     ///   - `hi = 12, lo = 10, step = (12-10) / 5 = 0.4`
-    ///   - `k_low = (10-10)/0.4 = 0`, `k_high = (12-10)/0.4 = 5 → clamp to 4`
+    ///   - `k_low = (10-10)/0.4 = 0`
+    ///   - `k_high = (12-10)/0.4 = 2.0/0.4 ≈ 4.9999... → int/floor → 4` (IEEE-754
+    ///     cannot land exactly on 5.0; both Python's `int()` and Rust's `as i64`
+    ///     truncate the same way)
     ///   - span = [bin 0, bin 1, bin 2, bin 3, bin 4] (all 5 bins)
     ///   - `share = 100 / 5 = 20` per bin per row
     ///   - `decay = 1.0` (turnover=0 → no decay)
@@ -156,8 +169,8 @@ mod tests {
     ///     (30 rows × 20 share per bin = 600 per bin; total mass = 3000 = 30 × 100)
     ///
     /// This is a non-tautological test: the kernel does decay+distribute+clamp
-    /// arithmetic; a bug in any of those (off-by-one in the clamp, wrong floor
-    /// direction, wrong decay formula, etc.) breaks the expected 600.
+    /// arithmetic; a bug in any of those (off-by-one in the clamp, wrong bin
+    /// truncation, wrong decay formula, etc.) breaks the expected 600.
     #[test]
     fn main_path_hand_computed() {
         let df = df! {
