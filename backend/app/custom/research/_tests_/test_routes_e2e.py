@@ -276,3 +276,127 @@ def test_short_term_overview_empty_input() -> None:
     assert body["result"]["items"] == []
     assert body["result"]["ladder"] == []
     assert body["result"]["emotion_score"] >= 0
+
+
+# === P2 v2.0j main_line_concentration 回归测试 ===
+def test_build_quotes_from_ladder_pulls_ext_hy_ths_industry() -> None:
+    """v2.0j: _build_quotes_from_ladder 从 st.ext_hy_ths__所属同花顺行业
+    抽 industry, 同时构建 industry_map; main_line_concentration 不再永远 0%。
+
+    之前 P2 v2.0c / v2.0i 时 industry_map 恒为空 (snapshot 不含 industry),
+    导致 deep_metrics.main_line_concentration 总是 0%. 这个测试是回归保护.
+    """
+    from app.custom.research.routes import (
+        _aggregate_overview,
+        _build_quotes_from_ladder,
+    )
+
+    # 构造一组真实形态的 ladder (每个 stock 带 ext_hy_ths__所属同花顺行业)
+    ladder = {
+        "as_of": "2026-10-16",
+        "tiers": [
+            {"stocks": [
+                {"symbol": "600825.SH", "name": "新华传媒", "close": 11.0,
+                 "change_pct": 0.10, "consecutive_limit_ups": 5, "status": "limit_up",
+                 "ext_hy_ths__所属同花顺行业": "文化传媒-出版",
+                 "ext_gn_ths__所属概念": "创投;文化传媒;融资融券"},
+                {"symbol": "600977.SH", "name": "中国电影", "close": 12.5,
+                 "change_pct": 0.10, "consecutive_limit_ups": 3, "status": "limit_up",
+                 "ext_hy_ths__所属同花顺行业": "文化传媒-出版",
+                 "ext_gn_ths__所属概念": "文化传媒;AI语料"},
+            ]},
+            {"stocks": [
+                {"symbol": "300750.SZ", "name": "宁德时代", "close": 230.0,
+                 "change_pct": 0.10, "consecutive_limit_ups": 1, "status": "limit_up",
+                 "ext_hy_ths__所属同花顺行业": "电池-动力电池",
+                 "ext_gn_ths__所属概念": "新能源汽车;锂电池"},
+                {"symbol": "002594.SZ", "name": "比亚迪", "close": 95.0,
+                 "change_pct": 0.10, "consecutive_limit_ups": 1, "status": "limit_up",
+                 "ext_hy_ths__所属同花顺行业": "汽车整车-乘用车",
+                 "ext_gn_ths__所属概念": "新能源汽车;整车"},
+            ]},
+            {"stocks": [
+                # 一只 stock 没带 ext_hy_ths (fallback → 空 industry, 不计入 map)
+                {"symbol": "000001.SZ", "name": "平安银行", "close": 12.0,
+                 "change_pct": 0.10, "consecutive_limit_ups": 1, "status": "limit_up",
+                 "ext_gn_ths__所属概念": "金融"},
+            ]},
+        ],
+    }
+    # snapshot 我们故意不传 (模拟真实场景: snapshot 不含 industry)
+    snapshot: dict = {}
+
+    quotes, prev_pool, industry_map = _build_quotes_from_ladder(ladder, snapshot)
+
+    # 1. Quote.industry 来自 st.ext_hy_ths__所属同花顺行业, 而非 snapshot
+    industry_by_sym = {q.symbol: q.industry for q in quotes}
+    assert industry_by_sym["600825.SH"] == "文化传媒-出版"
+    assert industry_by_sym["300750.SZ"] == "电池-动力电池"
+    assert industry_by_sym["000001.SZ"] == ""  # fallback 空
+
+    # 2. theme_tags 从 ext_gn_ths__所属概念 拆分
+    tags_825 = next(q.theme_tags for q in quotes if q.symbol == "600825.SH")
+    assert "创投" in tags_825
+    assert "文化传媒" in tags_825
+    assert "融资融券" in tags_825
+
+    # 3. industry_map 聚合: 4 只带 industry, 分布见下
+    assert industry_map == {"文化传媒-出版": 2, "电池-动力电池": 1, "汽车整车-乘用车": 1}
+
+    # 4. _aggregate_overview 拿 industry_map 后, main_line_concentration > 0%
+    result = _aggregate_overview(
+        quotes, ladder["as_of"], prev_pool=prev_pool, industry_map=industry_map
+    )
+    deep = result["deep_metrics"]
+    # 2/4 = 0.5 (传媒是最强行业, 2 只)
+    assert deep["main_line_concentration"] > 0.0
+    assert abs(deep["main_line_concentration"] - 0.5) < 0.01
+
+
+def test_aggregate_overview_fallback_industry_from_quotes() -> None:
+    """v2.0j: industry_map 不传时, _aggregate_overview 兜底从 quotes[i].industry 派生."""
+    from app.custom.research.routes import _aggregate_overview
+
+    # 4 只 Quote, 全带 industry=电子; 不传 industry_map
+    quotes = [
+        qfx.sample_quotes_basic()[0].__class__(  # 用现有 fixture class 构造
+            symbol="x1", name="x1", trade_date="2026-10-16",
+            prev_close=10.0, last_close=11.0, high=11.0, low=10.9,
+            volume=1_000_000, amount=11_000_000,
+            industry="电子-半导体", theme_tags=[], limit_time="10:00:00",
+            is_exploded=False, is_limit_down=False,
+        ),
+    ] * 4
+    # 只看主 line: 全是 "电子-半导体", 应 main_line_concentration = 1.0
+    result = _aggregate_overview(quotes, "2026-10-16", prev_pool=[])
+    deep = result["deep_metrics"]
+    assert abs(deep["main_line_concentration"] - 1.0) < 0.01
+
+
+def test_aggregate_overview_industry_empty_still_zero() -> None:
+    """v2.0j: 所有 Quote.industry 都空 → main_line_concentration 仍 0% (兜底派生空 map).
+
+    fixture sample_quotes_basic 默认 industry 非空 ('电子'/'通信'/...), 这里手动
+    把所有 Quote.industry 置空, 模拟真实场景 'snapshot 不带 industry 且 stock 也无
+    ext_hy_ths'; 主线集中度应回退到 0% (符合常识).
+    """
+    from dataclasses import replace
+
+    from app.custom.research.routes import _aggregate_overview
+
+    # 强制清空 industry (fixture 默认 '电子' 等)
+    quotes = [replace(q, industry="") for q in qfx.sample_quotes_basic()]
+    result = _aggregate_overview(quotes, "2026-10-16", prev_pool=qfx.prev_pool_basic())
+    deep = result["deep_metrics"]
+    assert deep["main_line_concentration"] == 0.0
+
+
+def test_aggregate_overview_industry_from_fixture_nonempty() -> None:
+    """v2.0j: sample_quotes_basic 默认带 industry (电子/通信/医药/...) → 非 0%."""
+    from app.custom.research.routes import _aggregate_overview
+
+    quotes = qfx.sample_quotes_basic()  # 默认带 industry
+    result = _aggregate_overview(quotes, "2026-10-16", prev_pool=qfx.prev_pool_basic())
+    deep = result["deep_metrics"]
+    # 之前的修复前永远是 0%; 现在兜底派生让非零
+    assert deep["main_line_concentration"] > 0.0

@@ -387,13 +387,17 @@ def build_router() -> APIRouter:
                 if row.get("symbol")
             }
             trade_date = ladder.get("as_of") or "1970-01-01"
-            quotes, prev_pool = _build_quotes_from_ladder(ladder, snapshot)
+            quotes, prev_pool, industry_map = _build_quotes_from_ladder(ladder, snapshot)
             if not quotes:
                 raise HTTPException(
                     status_code=404,
                     detail=f"no quotes returned by limit-ladder at {trade_date}",
                 )
-            result = _aggregate_overview(quotes, trade_date, prev_pool=prev_pool)
+            result = _aggregate_overview(
+                quotes, trade_date,
+                prev_pool=prev_pool,
+                industry_map=industry_map or None,  # 空 map 让函数兜底派生
+            )
             if include_ladder:
                 result["ladder_raw"] = {
                     "as_of": ladder.get("as_of"),
@@ -757,15 +761,20 @@ def _fetch_market_snapshot() -> dict[str, dict[str, Any]]:
 
 def _build_quotes_from_ladder(
     ladder: dict[str, Any], snapshot: dict[str, dict[str, Any]]
-) -> tuple[list[Quote], list[dict]]:
-    """从 limit-ladder + market-snapshot 构造 IRP Quote[] + prev_pool。
+) -> tuple[list[Quote], list[dict], dict[str, int]]:
+    """从 limit-ladder + market-snapshot 构造 IRP Quote[] + prev_pool + industry_map。
+
+    Returns: (quotes, prev_pool, industry_map) 三元组.
+      industry_map 来自 st 上 ext_hy_ths.所属同花顺行业 (限转 `__` 形式),
+      用于 compute_emotion_score 的 main_line_concentration 维度.
 
     字段映射:
       - prev_close = close / (1 + change_pct)   # snapshot 无 prev_close, 反推
       - last_close = close
       - high/low/volume 从 snapshot 补 (snapshot 不含 high/low, 用 close/avg 当近似)
-      - industry  从 snapshot 暂无, 留空字符串 (后续接 ext_hy_ths 后再补)
-      - theme_tags 从 snapshot 暂无, 留空 list (后续接 ext_gn_ths 后再补)
+      - industry  从 st.ext_hy_ths__所属同花顺行业 (limit-ladder ext_columns 默认传),
+                   fallback 到 snap.get("industry") (尚未提供)
+      - theme_tags 从 st.ext_gn_ths__所属概念 拆分 (`;` 分隔的多概念), fallback snap.theme_tags
       - is_exploded  status == 'broken'
       - is_limit_down status == 'failed' 且 change_pct < -0.095
       - limit_time  None (limit-ladder 不提供, 已知涨停但无具体时刻)
@@ -776,6 +785,7 @@ def _build_quotes_from_ladder(
     """
     quotes: list[Quote] = []
     prev_pool: list[dict] = []
+    industry_map: dict[str, int] = {}
     as_of = ladder.get("as_of") or "1970-01-01"
     for tier in ladder.get("tiers") or []:
         for st in tier.get("stocks") or []:
@@ -789,8 +799,22 @@ def _build_quotes_from_ladder(
             volume = float(snap.get("volume") or 0.0)
             amount = float(snap.get("amount") or 0.0)
             turnover = float(snap.get("turnover_rate") or 0.0)  # 小数制, 0.030 = 3.0%
-            industry = str(snap.get("industry") or "")  # snapshot 不含 industry, 默认空
-            theme_tags = list(snap.get("theme_tags") or [])
+            # industry 从 ext_hy_ths__所属同花顺行业 抽 (limit-ladder ext 字段名已
+            # 用 "__" 替换 "."); snapshot 暂未提供 industry 字段.
+            industry = str(
+                st.get("ext_hy_ths__所属同花顺行业")
+                or snap.get("industry")
+                or ""
+            ).strip()
+            # theme_tags 拆分 `;` 分隔的多概念字符串 (limit-ladder ext_gn_ths 字段)
+            gn_raw = st.get("ext_gn_ths__所属概念") or snap.get("theme_tags") or []
+            if isinstance(gn_raw, str):
+                theme_tags = [t.strip() for t in gn_raw.split(";") if t.strip()]
+            else:
+                theme_tags = list(gn_raw)
+            # 累计 industry_map (用于 main_line_concentration)
+            if industry:
+                industry_map[industry] = industry_map.get(industry, 0) + 1
 
             status = str(st.get("status") or "")
             boards = int(st.get("consecutive_limit_ups") or 0)
@@ -816,13 +840,14 @@ def _build_quotes_from_ladder(
             # prev_pool: 只填今日涨停且连板 ≥ 2 的; prev_board = boards - 1
             if status == "limit_up" and boards >= 2:
                 prev_pool.append({"symbol": symbol, "board_count": boards - 1})
-    return quotes, prev_pool
+    return quotes, prev_pool, industry_map
 
 
 def _aggregate_overview(
     quotes: list[Quote],
     trade_date: str,
     prev_pool: list[dict] | None = None,
+    industry_map: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """复用短路版算法: 涨停池 + 6 v2 算法 + theme_heat 聚合。
 
@@ -831,19 +856,32 @@ def _aggregate_overview(
         trade_date: YYYY-MM-DD
         prev_pool: 昨日涨停池, 用于算连板晋级率; P2 v2.0c 从
             limit-ladder.consecutive_limit_ups 反推 (limit_up 且 boards≥2 → boards-1)
+        industry_map: 行业 → 涨停只数 统计. None 时从 quotes[i].industry 派生
+            (聚合空字符串以外的值). 供 compute_emotion_score / compute_deep_metrics
+            的 main_line_concentration 维度计算 — 之前 main_line_concentration
+            总是 0% 是因为 industry_map 始终为空 (snapshot 不含 industry 字段,
+            limit-ladder stock dict 默认也不带 — 直到 P2 v2.0j 接 ext_hy_ths).
 
     Returns: 与 /short-term-overview 同 schema 的 result dict。
     """
     items, stats = aggregate_limit_up_pool(quotes, prev_pool)
     ladder = build_ladder(items)
 
-    emotion = compute_emotion_score(items, None, None)
+    # industry_map 兜底: 从 quotes[i].industry 聚合 (count 非空行业)
+    if industry_map is None:
+        industry_map = {}
+        for q in quotes:
+            if q.industry:
+                industry_map[q.industry] = industry_map.get(q.industry, 0) + 1
+
+    emotion = compute_emotion_score(items, None, industry_map)
     phase = judge_emotion_phase(emotion, None)
     secondary = compute_secondary_indicators(items, prev_pool)
     # v2.0i: 传 stats["exploded_total"] (status==broken 的只数) 给 compute_deep_metrics,
     #   否则 final_explode_rate 永远 = 0/total = 0% (易误读为"无炸板").
+    # v2.0j: 同时传 industry_map, 让 main_line_concentration 不再永远 0%.
     deep = compute_deep_metrics(
-        items, prev_pool, None, int(stats.get("exploded_total", 0))
+        items, prev_pool, industry_map, int(stats.get("exploded_total", 0))
     )
     promo = compute_promotion_by_board(items, prev_pool)
 
