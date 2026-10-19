@@ -1,0 +1,74 @@
+[
+  {
+    "amount": 646698620.0,
+    "board": "沪主板",
+    "change_pct": 0.04298492628789144,
+    "close": 125.93,
+    "name": null,
+    "symbol": "600436.SH",
+    "turnover_rate": 0.8558350258233144
+  },
+  {
+    "amount": 2802656100.0,
+    "board": "沪主板",
+    "change_pct": 0.034530386740331494,
+    "close": 7.49,
+    "name": null,
+    "symbol": "601288.SH",
+    "turnover_rate": 0.11845345576654832
+  },
+  {
+    "amount": 2468150700.0,
+    "board": "沪主板",
+    "change_pct": 0.027456647398843986,
+    "close": 7.11,
+    "name": null,
+    "symbol": "601988.SH",
+    "turnover_rate": 0.1671775860759069
+  },
+  {
+    "amount": 2961912800.0,
+    "board": "深主板",
+    "change_pct": 0.022931442080378395,
+    "close": 86.54,
+    "name": null,
+    "symbol": "000333.SZ",
+    "turnover_rate": 0.4973003503163125
+  },
+  {
+    "amount": 868319590.0,
+    "board": "沪主板",
+    "change_pct": 0.021151008362026723,
+    "close": 20.76,
+    "name": null,
+    "symbol": "600690.SH",
+    "turnover_rate": 0.6786159865507848
+  },
+  {
+    "amount": 903749290.0,
+    "board": "深主板",
+    "change_pct": 0.0209118311981914,
+    "close": 54.19,
+    "name": null,
+    "symbol": "000538.SZ",
+    "turnover_rate": 0.9380750030471533
+  },
+  {
+    "amount": 833246240.0,
+    "board": "沪主板",
+    "change_pct": 0.01836547291092739,
+    "close": 11.09,
+    "name": null,
+    "symbol": "601012.SH",
+    "turnover_rate": 0.9915239167260226
+  },
+  {
+    "amount": 524468140.0,
+    "board": "创业板",
+    "change_pct": 0.016666666666666653,
+    "close": 7.93,
+    "name": null,
+    "symbol": "300015.SZ",
+    "turnover_rate": 0.8330597780690651
+  }
+]

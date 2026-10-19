@@ -1,0 +1,146 @@
+{
+  "lagging": [
+    {
+      "amount": 8399331700.0,
+      "avg_pct": -0.036028880866426055,
+      "count": 1,
+      "down_count": 1,
+      "leader": {
+        "change_pct": -0.036028880866426055,
+        "name": null,
+        "symbol": "300750.SZ"
+      },
+      "name": "电池-锂电池",
+      "source_field": "ext_hy_ths.所属同花顺行业",
+      "up_count": 0
+    },
+    {
+      "amount": 1811859340.0,
+      "avg_pct": -0.0254811119030648,
+      "count": 2,
+      "down_count": 2,
+      "leader": {
+        "change_pct": -0.007246376811594049,
+        "name": null,
+        "symbol": "600048.SH"
+      },
+      "name": "房地产-住宅开发",
+      "source_field": "ext_hy_ths.所属同花顺行业",
+      "up_count": 0
+    },
+    {
+      "amount": 44995772.0,
+      "avg_pct": -0.024590163934426253,
+      "count": 1,
+      "down_count": 1,
+      "leader": {
+        "change_pct": -0.024590163934426253,
+        "name": null,
+        "symbol": "600340.SH"
+      },
+      "name": "房地产-产业地产",
+      "source_field": "ext_hy_ths.所属同花顺行业",
+      "up_count": 0
+    },
+    {
+      "amount": 1295803130.0,
+      "avg_pct": -0.015602836879432544,
+      "count": 1,
+      "down_count": 1,
+      "leader": {
+        "change_pct": -0.015602836879432544,
+        "name": null,
+        "symbol": "600887.SH"
+      },
+      "name": "饮料制造-乳品",
+      "source_field": "ext_hy_ths.所属同花顺行业",
+      "up_count": 0
+    },
+    {
+      "amount": 2764976000.0,
+      "avg_pct": -0.013963161021984518,
+      "count": 1,
+      "down_count": 1,
+      "leader": {
+        "change_pct": -0.013963161021984518,
+        "name": null,
+        "symbol": "002415.SZ"
+      },
+      "name": "计算机设备-安防设备",
+      "source_field": "ext_hy_ths.所属同花顺行业",
+      "up_count": 0
+    }
+  ],
+  "leading": [
+    {
+      "amount": 1550447910.0,
+      "avg_pct": 0.03194837874304142,
+      "count": 2,
+      "down_count": 0,
+      "leader": {
+        "change_pct": 0.04298492628789144,
+        "name": null,
+        "symbol": "600436.SH"
+      },
+      "name": "中药",
+      "source_field": "ext_hy_ths.所属同花顺行业",
+      "up_count": 2
+    },
+    {
+      "amount": 9132881630.0,
+      "avg_pct": 0.021654581720095014,
+      "count": 4,
+      "down_count": 0,
+      "leader": {
+        "change_pct": 0.034530386740331494,
+        "name": null,
+        "symbol": "601288.SH"
+      },
+      "name": "银行-国有大型银行",
+      "source_field": "ext_hy_ths.所属同花顺行业",
+      "up_count": 4
+    },
+    {
+      "amount": 868319590.0,
+      "avg_pct": 0.021151008362026723,
+      "count": 1,
+      "down_count": 0,
+      "leader": {
+        "change_pct": 0.021151008362026723,
+        "name": null,
+        "symbol": "600690.SH"
+      },
+      "name": "白色家电-冰洗",
+      "source_field": "ext_hy_ths.所属同花顺行业",
+      "up_count": 1
+    },
+    {
+      "amount": 833246240.0,
+      "avg_pct": 0.01836547291092739,
+      "count": 1,
+      "down_count": 0,
+      "leader": {
+        "change_pct": 0.01836547291092739,
+        "name": null,
+        "symbol": "601012.SH"
+      },
+      "name": "光伏设备-光伏电池组件",
+      "source_field": "ext_hy_ths.所属同花顺行业",
+      "up_count": 1
+    },
+    {
+      "amount": 4315376400.0,
+      "avg_pct": 0.01678352301537272,
+      "count": 2,
+      "down_count": 0,
+      "leader": {
+        "change_pct": 0.022931442080378395,
+        "name": null,
+        "symbol": "000333.SZ"
+      },
+      "name": "白色家电-空调",
+      "source_field": "ext_hy_ths.所属同花顺行业",
+      "up_count": 2
+    }
+  ]
+}

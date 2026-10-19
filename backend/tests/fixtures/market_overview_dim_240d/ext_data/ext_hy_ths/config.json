@@ -1,0 +1,70 @@
+{
+  "id": "ext_hy_ths",
+  "label": "扩展行业",
+  "mode": "snapshot",
+  "fields": [
+    {
+      "name": "symbol",
+      "dtype": "string",
+      "label": "标的代码"
+    },
+    {
+      "name": "code",
+      "dtype": "string",
+      "label": "代码"
+    },
+    {
+      "name": "股票代码",
+      "dtype": "string",
+      "label": "股票代码"
+    },
+    {
+      "name": "股票简称",
+      "dtype": "string",
+      "label": "股票简称"
+    },
+    {
+      "name": "所属同花顺行业",
+      "dtype": "string",
+      "label": "所属同花顺行业"
+    }
+  ],
+  "description": "同花顺行业分类 (fuyao 同花顺指数接口, 扁平板块无层级; 拉取配方见「拉取」页)",
+  "symbol_map": {
+    "type": "mapped",
+    "col": "股票代码"
+  },
+  "code_map": {
+    "type": "computed",
+    "from": "symbol",
+    "method": "strip_exchange"
+  },
+  "created_at": "2026-10-17T20:33:57.699891",
+  "updated_at": "2026-10-19T15:07:30.162762",
+  "pull": {
+    "url": "https://fuyao.aicubes.cn/api/a-share-index/catalog/ths-index-list?tag=industry",
+    "method": "GET",
+    "headers": {},
+    "body": null,
+    "response_path": "data.item",
+    "field_map": {},
+    "schedule_minutes": 1440,
+    "enabled": true,
+    "last_run": "2026-10-19T07:07:30.154704+00:00",
+    "last_status": "error",
+    "last_message": "已配置 header 鉴权但未设置 API Key, 请在拉取设置中填写",
+    "last_rows": 5575,
+    "next_run": "2026-10-20T07:07:30.161754+00:00",
+    "time_window_start": null,
+    "time_window_end": null,
+    "date_param": null,
+    "date_format": "iso",
+    "time_field": null,
+    "auth": {
+      "type": "header",
+      "header": "X-api-key",
+      "key_ref": "fuyao_api_key"
+    },
+    "timeout_seconds": 20
+  }
+}
