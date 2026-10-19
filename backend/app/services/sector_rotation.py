@@ -320,6 +320,91 @@ def _rank_for_mode(
     return [item["name"] for item in sectors]
 
 
+# Path A-4 (multi-kernel) service-level seam ──────────────────────────────
+# Per Spec 0004 §"Implementation Decisions" + ADR-0006 §"5 段":
+# `build_sector_rotation` is a thin try-import adapter. It dispatches to
+# `_orchestrate_with_kernels` when `tf_rs_indicators` exposes the 8 Path A-4
+# kernels; otherwise it falls back to `_py_compute` (= the original Python
+# function retained verbatim for byte-equality parity + CI without Rust).
+#
+# Q5=b locks the **public** name `build_sector_rotation` (and the
+# `build_sector_rotation` callers at `app/api/sector_rotation.py:43` and the
+# 30+ existing pytest tests at `backend/tests/test_sector_rotation.py`).
+# Original private symbols are aliased as `_py_*` for the adapter's fallback
+# path; the kernel-driven orchestration lives at `_orchestrate_with_kernels`.
+
+# Path A-4 8-kernel cdylib availability (cached; refreshed via `_RUST_KERNELS_OK = None`
+# in tests that need to force re-evaluation, e.g. the forced-ImportError fallback
+# seam test). Mirrors the Path A-3 `_dimension_rank` adapter pattern.
+_RUST_KERNELS_OK: bool | None = None
+
+
+def _rust_kernels_available() -> bool:
+    """Return True if `tf_rs_indicators` exposes the 8 Path A-4 kernels.
+
+    Cached: re-import only when `_RUST_KERNELS_OK = None`. Tests monkeypatch
+    this flag to force the fallback path without touching global modules.
+    """
+    global _RUST_KERNELS_OK
+    if _RUST_KERNELS_OK is not None:
+        return _RUST_KERNELS_OK
+    try:
+        import tf_rs_indicators  # noqa: F401  cdylib presence probe
+        from tf_rs_indicators import (  # noqa: F401  per-kernel probe
+            bare_kernel,
+            cross_events_kernel,
+            minute_pcts_kernel,
+            per_bucket_reduce_kernel,
+            prev_daily_close_kernel,
+            rank_for_mode_kernel,
+            sector_flow_kernel,
+            timeline_kernel,
+        )
+        _RUST_KERNELS_OK = True
+    except ImportError:
+        _RUST_KERNELS_OK = False
+    return _RUST_KERNELS_OK
+
+
+def _orchestrate_with_kernels(
+    repo,
+    data_dir: Path,
+    kind: str,
+    flow_field: str | None,
+    top: int,
+    bucket_minutes: int,
+    series_names: list[str] | None,
+    exclude_sectors: tuple[str, ...],
+    auto_rows: int,
+    sort_by: str,
+) -> dict:
+    """Path A-4 thin kernel-orchestrator. Returns the same `{"status": "no_data", ...}`
+    short-circuit dict as `_py_compute` when the filesystem pre-checks fail; falls
+    through to `_py_compute` for the full algorithm path until T04+ wires the
+    per-kernel dispatch.
+
+    The seam test `test_rs_sector_rotation_seam.py::test_parity` exercises this
+    short-circuit return path which IS byte-equal to `_py_compute`'s output for
+    an empty `kline_minute/` directory. The kernel-level dtype preservation
+    seam test (`test_dtype_preservation`) calls each of the 8 kernels directly
+    via `tf_rs_indicators.<kernel>` and verifies the documented schema.
+    """
+    minute_dir = data_dir / "kline_minute"
+    target = _latest_minute_partition(minute_dir)
+    if not target:
+        # Spec 0004 §"Adapter orchestration" step 3: empty/no-data short-circuit
+        # before any kernel call. Byte-equal to `_py_compute` short-circuit at line 408.
+        return {"status": "no_data", "reason": "minute_missing", "kind": kind}
+    # Full algorithm path: T04 cycle scope delegates to `_py_compute` until
+    # per-kernel dispatch (4 IO + 2 pre-aggregate + 3 reduce + 1 sort) is wired
+    # in a future cycle. See Spec 0004 §"Implementation Decisions" for the
+    # 10-step plan + T05 closure decision on whether to fully migrate this path.
+    return _py_compute(
+        repo, data_dir, kind, flow_field, top, bucket_minutes,
+        series_names, exclude_sectors, auto_rows, sort_by,
+    )
+
+
 def build_sector_rotation(
     repo,
     *,
@@ -390,7 +475,16 @@ def build_sector_rotation(
     if hit is not None and (now - _cache_ts.get(cache_key, 0.0)) < _CACHE_TTL:
         return hit
 
-    result = _compute(repo, data_dir, kind, flow_field, top, bucket_minutes, series_names, exclude_effective, rows_limit, sort_by)
+    if _rust_kernels_available():
+        result = _orchestrate_with_kernels(
+            repo, data_dir, kind, flow_field, top, bucket_minutes,
+            series_names, exclude_effective, rows_limit, sort_by,
+        )
+    else:
+        result = _py_compute(
+            repo, data_dir, kind, flow_field, top, bucket_minutes,
+            series_names, exclude_effective, rows_limit, sort_by,
+        )
     _cache[cache_key] = result
     _cache_ts[cache_key] = time.monotonic()
     while len(_cache) > _CACHE_MAX_ENTRIES:
@@ -642,3 +736,15 @@ def _compute(repo, data_dir: Path, kind: str, flow_field: str | None, top: int, 
         "series": series,
         "universe": universe,
     }
+
+
+# _py_* aliases for adapter fallback (Q5=b preserves original `build_sector_rotation`
+# public name; private 6 functions are aliased `_py_*` so the adapter can call the
+# original Python reference even when `tf_rs_indicators` is unavailable, with a
+# name-mangling that aligns to the Path A-3 T04 precedent in market_overview_builder.py).
+_py_bare = _bare  # noqa: E305  alias follows private API definition
+_py_prev_daily_close = _prev_daily_close
+_py_minute_pcts = _minute_pcts
+_py_load_sector_flow = _load_sector_flow
+_py_compute = _compute
+_py_rank_for_mode = _rank_for_mode

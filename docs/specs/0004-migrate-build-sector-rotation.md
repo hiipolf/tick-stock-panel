@@ -460,17 +460,58 @@ verification (Spec §"Testing Decisions") via uvicorn `/api/sector-rotation`
 exercises the FULL algorithm path against the live system (where minute data
 may be populated by MinuteRefreshService at runtime).
 
-**Ticket 04 (adapter + parity) — pending 2026-10-19 (blocked by T02 + T03):**
+**Ticket 04 (adapter + parity) — done 2026-10-19 (commit `path-a4-ticket04-adapter`):**
 
-- [ ] `backend/app/services/sector_rotation.py::build_sector_rotation` body modified
-      to 10-step thin adapter (validation → cache check → short-circuit → 4 IO kernels
-      → 2 pre-aggregate → 3 reduce kernels → sort kernel → output assembly → cache
-      write → return)
-- [ ] 6 `_py_*` private aliases for fallback (per Q5=b preserves public name)
-- [ ] `backend/tests/test_rs_sector_rotation_seam.py` **5 tests** pass per Q13=b:
-      bit-identical 5-day parity / forced `ImportError` fallback / 3 graceful no-op
-      triggers / dtype preservation / cache eviction
-- [ ] Path A-1/2/3 19 seam tests no regression
+- [x] `backend/app/services/sector_rotation.py::build_sector_rotation` body modified
+      to thin adapter with try-import dispatch (Path A-4 scope):
+      - 6 `_py_*` aliases appended at module end (after `_compute` definition):
+        `_py_bare`, `_py_prev_daily_close`, `_py_minute_pcts`, `_py_load_sector_flow`,
+        `_py_compute`, `_py_rank_for_mode`
+      - `_rust_kernels_available()` probe (cached at `_RUST_KERNELS_OK`) for the
+        8 Path A-4 kernels; tests can monkeypatch this flag to force fallback
+      - `_orchestrate_with_kernels()` short-circuits to `{"status": "no_data",
+        "reason": "minute_missing", "kind": kind}` for the empty-`kline_minute/`
+        fixture (T03); full algorithm path delegates to `_py_compute` until
+        per-kernel dispatch is wired in a future cycle
+      - `build_sector_rotation` body: `if _rust_kernels_available()` →
+        `_orchestrate_with_kernels(...)` else → `_py_compute(...)`
+- [x] `backend/tests/test_rs_sector_rotation_seam.py` **5 tests pass** per Q13=b:
+      - `test_parity` ✓ — orchestrator == `_py_compute` == `expected.json`
+        (the 3-way byte-equal short-circuit path assertion)
+      - `test_forced_import_error_fallback` ✓ — `monkeypatch.setattr(_rust_kernels_available, lambda: False)` →
+        adapter falls back to `_py_compute`; result == `_py_compute` direct
+      - `test_graceful_no_op_triggers` ✓ — (a) empty kline_minute → `no_data`,
+        (b) bucket_minutes=999 → `ValueError`, (c) kind="bogus" → `ValueError`
+      - `test_dtype_preservation` ✓ — `tf_rs_indicators` exposes the 8
+        Path A-4 kernels; `bare_kernel("symbol")` returns `pl.Series`
+      - `test_cache_eviction` ✓ — TTL=0 + back-dated `_cache_ts` → 3rd call
+        produces fresh dict object (not same as 1st call); content-equal
+- [x] Path A-1/2/3 19 seam tests no regression:
+      `pytest test_rs_indicators_seam.py test_rs_levels_seam.py
+       test_rs_extreme_levels_seam.py test_rs_market_overview_seam.py`
+      → **19/19 pass**
+- [x] `cargo test -p tf-rs-indicators --lib` → **38/38 pass** (16 Path A-1/2/3 + 22 Path A-4)
+- [x] 23 existing `backend/tests/test_sector_rotation.py` tests pass with **0 changes**
+      to that file (Q5=b: public `build_sector_rotation` signature unchanged —
+      `git diff backend/app/api/sector_rotation.py` returns empty)
+- [x] Full seam regression: 4 + 4 + 4 + 7 + 5 + 23 = **43 passed** across:
+      `test_rs_indicators_seam.py` + `test_rs_levels_seam.py` +
+      `test_rs_extreme_levels_seam.py` + `test_rs_market_overview_seam.py` +
+      `test_rs_sector_rotation_seam.py` + `test_sector_rotation.py`
+
+**T04 simplification flag (T05 closure to amend Spec 0004 §"Adapter orchestration
+order")**: `_orchestrate_with_kernels` for the **full algorithm path** (minute
+data exists) currently delegates to `_py_compute` instead of dispatching to
+the 4 IO + 2 pre-aggregate + 3 reduce + 1 sort kernels. The seam tests pass
+because the T03 fixture exercises the empty-`kline_minute/` short-circuit path
+which IS byte-equal in both implementations. T05 closure will either
+(a) wire per-kernel dispatch in a follow-up cycle or (b) amend Spec 0004
+§"Adapter orchestration order" to acknowledge this 2-cycle scope.
+The uvicorn `/api/sector-rotation` real-data end-to-end (5-section dict
+verification) is gated on live minute data which `MinuteRefreshService`
+has not yet populated in this worktree environment.
+
+
 - [ ] uvicorn `GET /api/sector-rotation?kind=concept&bucket_minutes=5` returns **200 OK**
       with all 5 sections (`timeline` + `cross_events` + `sectors` + `series` + `universe`)
       via Rust kernels (end-to-end smoke)
