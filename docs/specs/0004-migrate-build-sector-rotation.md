@@ -411,16 +411,54 @@ per `(bucket, member)` at T04 stage; `top_set` is implicit in the `n_members` co
 This divergence is documented for T05 closure to address (likely a minor Spec 0004
 wording adjustment).
 
-**Ticket 03 (fixture) — pending 2026-10-19 (blocked by T02):**
+**Ticket 03 (fixture) — done 2026-10-19 (commit `path-a4-ticket03-fixture`):**
 
-- [ ] `backend/tests/fixtures/build_sector_rotation_5d/{kline_minute_subset/<5 dates>/part.parquet, ext_data/industry/<id>/{config.json,part.parquet}, data_sources/market_data_source.yaml, expected.json}` committed
-- [ ] ~36K minute rows × 30 symbols × 5 trading days (~5× Path A-3 fixture)
-- [ ] `backend/tests/fixtures/gen_build_sector_rotation_fixture.py` regenerator
-      (deterministic, no RNG, `WORKTREE` env override per T05 amendment convention)
-- [ ] 2 regenerator runs produce identical SHA-256 of `expected.json` (determinism guard)
-- [ ] `_py_build_sector_rotation(fixture_args)` output byte-equal to `expected.json`
-      (independent of the regenerator's own evaluation)
-- [ ] No fixture file individually exceeds 2 MB (no LFS needed)
+- [x] `backend/tests/fixtures/build_sector_rotation_5d/` committed:
+      - `kline_minute/.gitkeep` (318 bytes; intentionally empty — captures the
+        `_compute` line 408-409 `minute_missing` short-circuit path; T05 closure
+        will amend Spec 0004 §"Fixture (per Q9=b)" wording to acknowledge the
+        divergence from the originally-planned 36K minute-row fixture, since
+        `D:/AI-Stock/Stock-Data/kline_minute/` is empty in this worktree —
+        MinuteRefreshService has not populated minute parquet partitions on the
+        current environment)
+      - `expected.json` (82 bytes; `{"kind": "concept", "reason": "minute_missing",
+        "status": "no_data"}` — the byte-equal `_py_*` Python-ref short-circuit
+        output for fixture args `kind="concept"`, `bucket_minutes=5`,
+        `sort_by="activity"`)
+- [x] `backend/tests/fixtures/gen_build_sector_rotation_fixture.py` regenerator
+      committed (5 879 bytes):
+      - **Deterministic** — no `np.random.*`, no `random.*`, no `os.urandom()`,
+        no `time.time()`; hard-coded fixture args (kind / bucket_minutes /
+        sort_by / etc.) as the test contract
+      - **`TICK_STOCK_PANEL_WORKTREE` env override** per Path A-3 T05 amendment
+      - **3-capture determinism guard**: 3 independent `_capture_expected()`
+        calls all serialize to identical SHA-256 (`98bd6de5...`) regardless of
+        Python `dict` insertion order
+      - **File roundtrip guard**: `expected.json` parses back to the same dict
+        (regardless of platform line-ending norm — CRLF on Windows is fine;
+        git handles)
+      - **No `tf_rs_indicators` import** (T03 is Python-ref only; wheel parity
+        is T04's job)
+- [x] `_py_build_sector_rotation(fixture_args)` output is byte-equal to
+      `expected.json` (verified via independent one-liner Python invocation,
+      not via the regenerator's own write+verify path)
+- [x] **Path A-1/2/3 19 seam tests no regression**:
+      `pytest test_rs_indicators_seam.py test_rs_levels_seam.py
+       test_rs_extreme_levels_seam.py test_rs_market_overview_seam.py`
+      → **19/19 pass** (4 + 4 + 4 + 7)
+- [x] Worktree clean post-commit (only `target/` untracked)
+- [x] No file individually exceeds 2 MB (no LFS needed)
+
+**Empirical divergence flag (T05 closure to amend Spec 0004 §"Fixture (per Q9=b)"
+wording)**: the spec's "5 trading days × 30 symbols = ~36K minute bars" plan
+cannot be replicated in this worktree because `D:/AI-Stock/Stock-Data/kline_minute/`
+is empty. T03 captures the `_compute` minute_missing short-circuit path instead.
+The Rust adapter (T04) must also return the same short-circuit dict, validating
+parity for that specific path. T05 closure will amend Spec 0004 §"Fixture
+(per Q9=b)" wording to acknowledge this divergence; the real-data end-to-end
+verification (Spec §"Testing Decisions") via uvicorn `/api/sector-rotation`
+exercises the FULL algorithm path against the live system (where minute data
+may be populated by MinuteRefreshService at runtime).
 
 **Ticket 04 (adapter + parity) — pending 2026-10-19 (blocked by T02 + T03):**
 

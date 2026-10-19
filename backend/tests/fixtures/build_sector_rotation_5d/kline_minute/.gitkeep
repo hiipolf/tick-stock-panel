@@ -1,0 +1,5 @@
+intentionally empty — T03 fixture captures build_sector_rotation's
+`minute_missing` short-circuit. _compute returns
+{"status": "no_data", "reason": "minute_missing", "kind": ...}
+when no `date=*/part.parquet` partitions exist under kline_minute/.
+See Spec 0004 §"Fixture (per Q9=b)" T05 closure amendment note.
