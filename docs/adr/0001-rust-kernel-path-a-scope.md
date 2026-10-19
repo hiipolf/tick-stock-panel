@@ -5,7 +5,8 @@ Updated: 2026-10-19 (status bump after Spec 0001 + Spec 0002 + ADR-0006)
 Updated: 2026-10-19 (status bump to **`Service-level seam contract landed`** after Spec 0003 + ADR-0006 close)
 Updated: 2026-10-19 (Path A-4 spec freeze: multi-kernel service-level seam contract spec'd in Spec 0004, **implementation in flight**)
 Updated: 2026-10-19 (Path A-4 closure: multi-kernel service-level seam implemented, end-to-end verified — `tf_rs_indicators` reaches **14 functions**; 5 Path A-4 ticket commits + 5 milestone tags; ADR-0006 §"5 段"§1+§3 in-place amended for IO helper `PathBuf` accept)
-Status: **Accepted (indicator-level + service-level seam contracts landed; multi-kernel service-level seam implementation landed in Spec 0004)**
+Updated: 2026-10-19 (Path A-5 spec freeze: multi-batch daily-grain service-level seam spec'd in Spec 0005, **implementation in flight**)
+Status: **Accepted (indicator-level + service-level seam contracts landed; multi-kernel service-level seam implementation landed in Spec 0004; multi-batch daily-grain service-level seam spec'd in Spec 0005, pending implementation)**
 
 > **Changelog 2026-10-19**: status 由 `seam-only` 升到 `seam + first real
 > indicator`(Spec 0001 / ADR-0004),再升到 `seam + second real indicator`

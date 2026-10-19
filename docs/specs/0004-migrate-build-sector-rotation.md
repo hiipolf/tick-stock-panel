@@ -558,8 +558,14 @@ has not yet populated in this worktree environment.
 
 ## Out-of-Band Followups (Spec 0005+)
 
-- Path A-5: `regime_builder._compute_batch` (Spec 0005) — reuses Path A-4's
-  multi-kernel seam template (8-kernel pattern + 5-day fixture template +
+- Path A-5: `regime_builder._compute_batch` + `_aggregate_daily` (Spec 0005) — **Status:
+  `Ready-for-agent`** (commit `path-a5-spec-0005`, 2026-10-19). First
+  **multi-batch daily-grain** service-level migration pilot: 2 Rust kernels
+  (`compute_batch_kernel` IO helper + `aggregate_daily_kernel` heavy group_by
+  + agg) replacing 2 private Python functions. Reuses Path A-4's multi-kernel
+  seam template (5-ticket pattern + 5-day fixture template + dual-track
+  testing scaffold); new terminology in CONTEXT.md §"Multi-batch daily-grain
+  service-level seam (Path A-5+)". 5 implementation tickets T01-T05 待启动。
   dual-track testing scaffold) directly
 - Path A-6: `mining_candidates._scan_*` (Spec 0006)
 - New crate `crates/services/` if kernel count grows beyond ~14 — defer
