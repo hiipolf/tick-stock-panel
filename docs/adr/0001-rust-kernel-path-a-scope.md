@@ -1,7 +1,17 @@
 # ADR 0001 — Rust Kernel Path A: Scope
 
-Date: 2026-10-18
-Status: **Accepted**
+Date: 2026-10-18 (initial)
+Updated: 2026-10-19 (status bump after Spec 0001 implemented)
+Status: **Accepted (seam + first real indicator)**
+
+> **Changelog 2026-10-19**: status 由 `seam-only` 升到 `seam + first real
+> indicator`。`levels._support_resistance`(Spec 0001)已完整迁完:
+> kernel 在 `crates/indicators/src/levels.rs`,thin adapter 在
+> `backend/app/indicators/levels.py::_support_resistance`,240-day
+> fixture parity bit-identical。详见 [ADR-0004](0004-levels-migration.md)
+> + 8 个 milestone tag(`path-a-hello-world` → `path-a-ticket03-fixes`)。
+> 本 ADR 的原 "seam-only" 措辞被 ADR-0004 覆盖,但 seam 仍是最优先的
+> invariant(任何 kernel 必须先通过 seam 验证再谈业务逻辑)。
 
 ## 上下文 (Context)
 
