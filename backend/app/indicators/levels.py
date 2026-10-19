@@ -59,6 +59,26 @@ LEVEL_TYPES = {
 # 1. 压力位 / 支撑位 —— 成交量分布 (Volume Profile)
 # ================================================================
 
+def _bin_edges(df: pl.DataFrame, bins: int) -> tuple[float, float, float, list[float]] | None:
+    """Compute (hi, lo, step, edges) for the uniform-spaced chip distribution.
+
+    Returns `None` for the four no-op triggers the spec lists: empty df,
+    missing `high` / `low` column, `hi <= lo`, or `lo <= 0`. Both
+    `_py_support_resistance` and the Rust-kernel adapter call this to keep
+    bin policy in one place (Ticket 03 code-review fix: was Shotgun Surgery
+    across two functions).
+    """
+    if df.is_empty() or "high" not in df.columns or "low" not in df.columns:
+        return None
+    hi = float(df["high"].max())
+    lo = float(df["low"].min())
+    if not (hi > lo > 0):
+        return None
+    step = (hi - lo) / bins
+    edges = [lo + i * step for i in range(bins + 1)]
+    return hi, lo, step, edges
+
+
 def _py_support_resistance(df: pl.DataFrame, bins: int = 40) -> list[dict]:
     """筹码分布(换手率衰减模型) —— 国内主流 A 股支撑/压力位算法 (pure-Python ref)。
 
@@ -87,17 +107,11 @@ def _py_support_resistance(df: pl.DataFrame, bins: int = 40) -> list[dict]:
     """
     if df.is_empty() or "volume" not in df.columns or df.height < 20:
         return []
-
-    hi = float(df["high"].max())
-    lo = float(df["low"].min())
-    if not (hi > lo > 0):
+    if _bin_edges(df, bins) is None:
         return []
+    _, lo, step, edges = _bin_edges(df, bins)
 
     n = df.height
-
-    # 桶边界:bins 个桶需要 bins-1 个内部 break
-    step = (hi - lo) / bins
-    edges = [lo + i * step for i in range(bins + 1)]
 
     # 取换手率序列(百分数, 如 1.23 表示 1.23%)。无该字段则退化为纯累加(无衰减)。
     has_turnover = "turnover_rate" in df.columns
@@ -207,13 +221,12 @@ def _support_resistance(df: pl.DataFrame, bins: int = 40) -> list[dict]:
     if len(final_chips) != bins:
         return []
 
-    # Re-derive bin edges on the Python side (the kernel does not return them).
-    hi = float(df["high"].max())
-    lo = float(df["low"].min())
-    if not (hi > lo > 0):
+    # Re-derive bin edges on the Python side (the kernel does not return
+    # them). `_bin_edges` is the single source of truth for bin policy
+    # shared with `_py_support_resistance`.
+    if _bin_edges(df, bins) is None:
         return []
-    step = (hi - lo) / bins
-    edges = [lo + i * step for i in range(bins + 1)]
+    _, _, _, edges = _bin_edges(df, bins)
     close = float(df.tail(1)["close"][0])
     return _reduce_to_poc_and_dense(final_chips, edges, close)
 

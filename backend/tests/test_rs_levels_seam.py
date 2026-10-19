@@ -131,13 +131,23 @@ def test_python_fallback_when_wheel_missing(monkeypatch):
     levels = _load_levels_module()
     df, expected = _load_fixture()
 
-    # The adapter should now route to the pure-Python reference.
+    # The adapter now routes to the pure-Python reference (wheel is masked
+    # by the `__import__` mock). The meaningful assertions are:
+    #  (a) the adapter result matches the frozen 240-day reference — this
+    #      is the actual "fallback path produces the same dicts" gate
+    # (b) the reference itself, called directly, still produces the frozen
+    #      output — a smoke test against drift in `_py_support_resistance`
+    # The previous form `result == direct == expected` was tautological
+    # because under the mock `result` IS `direct`; (a) and (b) are independent.
     result = levels._support_resistance(df, 40)
     direct = levels._py_support_resistance(df, 40)
-
-    assert result == direct == expected, (
-        f"Fallback path diverges from the reference. "
-        f"result={result} direct={direct} expected={expected}"
+    assert result == expected, (
+        f"Fallback (adapter) result diverges from the frozen 240-day reference: "
+        f"{result} vs {expected}"
+    )
+    assert direct == expected, (
+        f"Reference itself drifted from frozen 240-day output: "
+        f"{direct} vs {expected}"
     )
 
 
@@ -229,3 +239,18 @@ def test_dtype_preservation_in_returned_dataframe():
         f"chip_pct dtype should be List(Float64), got {chip_col.dtype}"
     )
     assert chip_col.len() == df.height
+
+    # The kernel emits a 1-row List<Float64> column that Polars broadcasts
+    # to match input height. All rows must carry the IDENTICAL final-chips
+    # list (the broadcast target). If a future polars minor drops list
+    # broadcast, this fails loudly — the adapter would otherwise silently
+    # hit `chip_lists[-1] is None` and return `[]` without raising.
+    chip_lists = chip_col.to_list()
+    first = chip_lists[0]
+    assert all(lst == first for lst in chip_lists), (
+        "chip_pct should be broadcast (all rows identical); got differing lists"
+    )
+    # And the broadcast list must have the right length.
+    assert first is not None and len(first) == 40, (
+        f"chip_pct list element should be a 40-bin array, got {first!r}"
+    )
