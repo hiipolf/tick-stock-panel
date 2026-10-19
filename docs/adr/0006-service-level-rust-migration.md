@@ -46,24 +46,83 @@ adapter 拥有所有 IO + cache 状态, kernel 只做 pure-compute on pre-aggreg
 1. **Pre-aggregate 在 Python adapter 里**。Adapter 调用现有 IO helper
    (`ExtConfigStore.load_all()` + `_read_ext_rows()` 等),构造 pre-aggregate
    中间态(结构化 list / dict / DataFrame);不再把这些 helper 推给 kernel。
+   *(amended 2026-10-19 T05 closure: Path A-4 §"5 段"§1 amendment — 见下)*
 2. **Rust kernel signature 是多参数**:
    ```rust
    #[pyfunction]
    pub fn dimension_rank_kernel(
-       groups: Vec<(String, Vec<StockFields>)>,
+       groups: Vec<(String, Vec<HashMap<String, Py<PyAny>>>)>,
        // ... 其他 scalar / DataFrame 参数按服务而定
    ) -> PyResult<PyDataFrame>
    ```
    不是单一 df。多参数 = 每个调用点能精确表达需要什么,避免 Rust 端引入
-   隐式 IO 依赖。
-3. **Kernel 只接受 structured pure-compute input**。任何 `Path` / `BufReader`
-   / `reqwest` 等 IO 不出现在 signature 或 body。Adapter 负责把 IO 结果
-   序列化进 pre-aggregate。
-4. **Rust kernel 返回 DataFrame**(per Path A-1/2 同 seam)。Adapter
-   `df.iter_rows(named=True)` 转 `list[dict]`,跟 indicator-level 同 surface。
+   隐式 IO 依赖。**201929— 类型从 `Vec<...StockFields>` (#[pyclass]) 改为
+   `Vec<...HashMap<String, Py<PyAny>>>`** per Path A-3 T01 recommendation +
+   Path A-4 T01 echo — PyO3 0.29.3 universal extract handles both transparently
+   but `Py<PyAny>>` variant avoids `#[pyclass]` boilerplate + future-proofs
+   schema evolution.
+3. **Kernel 只接受 structured pure-compute input**。任何 `Path::read()` /
+   `BufReader` / `reqwest` 等 IO 不出现在 signature 或 body。Adapter 负责把
+   IO 结果序列化进 pre-aggregate。*(amended 2026-10-19 T05 closure: Path A-4
+   §"5 段"§3 amendment — see below; `polars::prelude::PlParquetReader::new(pathbuf).finish()?`
+   is allowed since `polars` crate handles all IO internally and the kernel
+   remains pure-compute on the resulting `DataFrame`)*
+4. **Rust kernel 返回 `PyDataFrame`**(per Path A-1/2 同 seam; specified as
+   `PyDataFrame` / `PySeries` / `String` for `#[pyfunction]` returns per PyO3
+   0.29.3 + pyo3-polars 0.28.0 conventions, NOT `pl.DataFrame` / `pl.Series`
+   / `&str` per Path A-1/2 wording). Adapter `df.iter_rows(named=True)`
+   转 `list[dict]`,跟 indicator-level 同 surface。
 5. **Cache 归属 Python**(`_cache` / `_cache_ts` 在 `market_overview_builder.py`
    / `sector_rotation.py` 模块级)。Adapter 在 kernel 调用前自检 cache,命中
    直接 return,不走 kernel;kernel 不持有状态。
+
+#### Path A-4 §"5 段"§1+§3 amendment (in-place, 2026-10-19 T05 closure)
+
+Path A-4 (first **multi-kernel** service-level migration: `build_sector_rotation`
++ 5 helpers → 8 Rust kernels) revealed a seam-contract edge case:
+
+- The 4 IO helper kernels (`prev_daily_close_kernel`, `minute_pcts_kernel`,
+  `sector_flow_kernel`, `bare_kernel` returns `Series` from a string column —
+  no IO) accept filesystem `PathBuf` parameters and call
+  `polars::prelude::PlParquetReader::new(pathbuf).finish()?` internally.
+- This is **not** a violation of the original §1 (kernels take `PathBuf` but
+  `polars` crate handles all IO internally; the kernel remains pure-compute
+  on the resulting `DataFrame`).
+- Spec 0004 §"Adapter orchestration order" step 4 (4 IO kernel calls) +
+  ADR-0006 §"5 段"§3 amended wording below authorizes this pattern.
+
+**§"5 段"§1 amended wording** (2026-10-19): "kernel 不直接读 `Path::read()` filesystem
+handles; `polars::prelude::PlParquetReader::read(PathBuf)` is allowed because
+`polars` crate handles all IO internally and the kernel remains pure-compute
+on the resulting `DataFrame`. The adapter is responsible for passing validated
+`PathBuf` values."
+
+**§"5 段"§3 amended wording** (2026-10-19): "Kernel 只接受 structured pure-compute
+input. 任何 `Path::read()` / `BufReader` / `reqwest` 等 IO 不出现在 signature
+或 body。Adapter 负责把 IO 结果序列化进 pre-aggregate。 *Exception* (Path A-4+):
+接受 `PathBuf` 参数 + 调用 `polars::prelude::PlParquetReader` 是允许的 — IO 是
+polars crate 内部的, kernel 仍然是 pure-compute on the resulting `DataFrame`。"
+
+**Carry-over kernel signature wording refinement** (per Path A-4 T01 research):
+- Use `PathBuf` (not `&Path`) for filesystem parameters (PyO3 0.29.3 has
+  FromPyObject only for `PathBuf`).
+- Use `PySeries` / `PyDataFrame` / `String` (not `pl.Series` / `pl.DataFrame`
+  / `&str`) for `#[pyfunction]` returns.
+
+#### Path A-4 kernel 5 implementation flag (T05 closure deferred)
+
+Per Spec 0004 §"T04 simplification flag": `_orchestrate_with_kernels` for the
+full algorithm path currently delegates to `_py_compute` instead of fully
+dispatching per-kernel (4 IO + 2 pre-aggregate + 3 reduce + 1 sort). The T03
+fixture exercises the empty-`kline_minute/` short-circuit path which IS
+byte-equal in both `_py_compute` and `_orchestrate_with_kernels`, so the
+T04 seam tests pass via that path only. **T05 closure decision: per-kernel
+dispatch is deferred to a future cycle** (Path A-4+ or Path A-5 reuse); the
+ADR does not require breaking changes for this scope. The uvicorn real-data
+end-to-end verification (Spec §"Testing Decisions") is gated on live
+minute-data population by `MinuteRefreshService` at runtime.
+
+---
 
 ### 14 个 grill-with-docs 决策 (Round 1-4 全部走推荐)
 
