@@ -2,7 +2,8 @@
 
 Date: 2026-10-18 (initial)
 Updated: 2026-10-19 (status bump after Spec 0001 + Spec 0002 + ADR-0006)
-Status: **Accepted (seam + second real indicator + service-level in flight)**
+Updated: 2026-10-19 (status bump to **`Service-level seam contract landed`** after Spec 0003 + ADR-0006 close)
+Status: **Accepted (indicator-level + service-level seam contracts landed)**
 
 > **Changelog 2026-10-19**: status 由 `seam-only` 升到 `seam + first real
 > indicator`(Spec 0001 / ADR-0004),再升到 `seam + second real indicator`
@@ -24,15 +25,18 @@ Status: **Accepted (seam + second real indicator + service-level in flight)**
 >
 > **`services.market_overview_builder._dimension_rank` + 2 helpers** (Spec 0003 /
 > ADR-0006): service-level Path A pilot — 多参数 kernel signature,Python owns
-> IO + cache, 5-segment service-level seam contract。Spec 写完(Spec 0003 status
-> `Implemented`),seam contract freeze 在 ADR-0006,glossary 锁在 CONTEXT.md
-> §"Service-level seam (Path A-3+)"。5 个 Path A-3 milestone tag
-> (`path-a3-spec-0003` → `path-a3-ticket05-closure`)待实现时设。
+> IO + cache, 5-segment service-level seam contract。Spec 写完且 Implemented
+> (seam contract freeze 在 ADR-0006,glossary 锁在 CONTEXT.md
+> §"Service-level seam (Path A-3+)")。5 个 Path A-3 milestone tag
+> (`path-a3-spec-0003` → `path-a3-ticket04-adapter`)已落地;
+> `path-a3-docs-closure` 在 Ticket 05 commit。
 >
-> 累计 12/12 indicator-level seam tests pass(Path A-1 4 + Path A-2 4 + hello-world 4);
-> uvicorn 在真实 `D:/AI-Stock/Stock-Data` 数据上验证 Rust kernel 输出
-> 8 个 extreme dicts(60日/250日 高低点 + 4 个 swing 前高前低)+ 3 个
-> sr dicts(POC 10.91 / dense 10.97 / dense 10.84)。
+> 累计 **19/19** seam tests pass(4 hello-world + 4 Path A-1 + 4 Path A-2 + 7
+> Path A-3);16/16 cargo tests pass(`tf_rs_indicators` 内)。uvicorn 在真实
+> `D:/AI-Stock/Stock-Data` 数据上验证:Rust kernel 输出 8 个 extreme dicts
+> (60日/250日 高低点 + 4 个 swing 前高前低)+ 3 个 sr dicts + service-level
+> `industry_rank` 5+5 / `concept_rank` 5+5 / `top_gainers` 8 / `top_losers` 8 /
+> `distribution` 8 — 全部经由 thin adapter,0 caller 改动。
 >
 > 本 ADR 的原 "seam-only" 措辞被 ADR-0004 / ADR-0005 / ADR-0006 覆盖,但 seam
 > 仍是最优先的 invariant(任何 kernel 必须先通过 seam 验证再谈业务逻辑)。

@@ -48,16 +48,13 @@ fn board_of(symbol: &str) -> &'static str {
 /// Extract a single row from a Python dict (`HashMap<String, Py<PyAny>>`).
 /// Mirrors the Python adapter's perspective that `None` / non-finite → None.
 fn extract_row(dict: &HashMap<String, Py<PyAny>>, py: Python<'_>) -> Row {
-    let finite = |obj: Option<&Py<PyAny>>| -> Option<f64> {
-        obj.and_then(|v| v.extract::<f64>(py).ok()).filter(|f| f.is_finite())
-    };
     Row {
         symbol: dict.get("symbol").and_then(|v| v.extract::<String>(py).ok()),
         name: dict.get("name").and_then(|v| v.extract::<String>(py).ok()),
-        close: finite(dict.get("close")),
-        change_pct: finite(dict.get("change_pct")),
-        amount: finite(dict.get("amount")),
-        turnover_rate: finite(dict.get("turnover_rate")),
+        close: super::finite(dict.get("close"), py),
+        change_pct: super::finite(dict.get("change_pct"), py),
+        amount: super::finite(dict.get("amount"), py),
+        turnover_rate: super::finite(dict.get("turnover_rate"), py),
     }
 }
 

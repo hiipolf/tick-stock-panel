@@ -94,32 +94,44 @@ Path A-1 / 0002 (indicator-level) 的双轨测试 + try-import fallback + `_py_*
 
 1. **Pre-aggregate input shape to `dimension_rank_kernel`**:
    ```rust
-   pub struct StockFields {
-       pub symbol: String,
-       pub name: Option<String>,
-       pub change_pct: Option<f64>,
-       pub amount: Option<f64>,
-   }
    #[pyfunction]
+   #[pyo3(signature = (groups, limit, source_fields=None))]
    pub fn dimension_rank_kernel(
-       groups: Vec<(String, Vec<StockFields>)>,
+       py: Python<'_>,
+       groups: Vec<(String, Vec<HashMap<String, Py<PyAny>>>)>,
        limit: u32,
+       source_fields: Option<Vec<Option<String>>>,
    ) -> PyResult<PyDataFrame>
    ```
-   `groups` 是 `(group_name, list[stock_fields])` 数组,每 stock_fields 含计算 leader / change_pct
-   aggregate 所需的最小字段。Adapter 负责从 `_read_ext_rows` 读 parquet → 构造 StockFields list。
+   `groups` 是 `(group_name, list[stock_dict])` 数组,**每 stock_dict 是 Python `dict` 的
+   `HashMap<String, Py<PyAny>>` 表达**(PyO3 0.29.3 universal extract holder)。PyO3 端
+   把 `dict["symbol"] / dict["change_pct"] / dict["amount"]` 等键的 value extract 成 Rust
+   内部 `StockRow { symbol, name, change_pct, amount }`(纯 Rust view,decoupled from PyO3
+   for unit-testability)。
+
+   **T01 signature amendment**:放弃了 spec 早期版本的 `#[pyclass] StockFields` derive
+   (per-field `#[pyo3(get)]` boilerplate + 改字段需要重编 schema)。改为 `Py<PyAny>`
+   universal holder,future-proofs schema evolution。详见
+   `docs/research/market-overview-rust-api.md` §"Decision matrix"。
+
+   **第 3 参数 `source_fields`**(T05 amendment):可选,`Vec<Option<String>>` 与 `groups`
+   parallel,携带 adapter 端已算好的 `config.id.field` source_field(用于看板成分股
+   弹窗展示当前组从哪个扩展数据集来)。`None` 或长度不匹配时 kernel 写 `null`。Rust 端
+   **不读 `source_fields`** 做任何分支判断 — 仅 carry-through。
 2. **`top_rows_kernel` signature**:
    ```rust
    #[pyfunction]
+   #[pyo3(signature = (rows, key, descending, limit))]
    pub fn top_rows_kernel(
-       rows: Vec<HashMap<String, PyObject>>,
+       py: Python<'_>,
+       rows: Vec<HashMap<String, Py<PyAny>>>,
        key: String,
        descending: bool,
        limit: u32,
    ) -> PyResult<PyDataFrame>
    ```
    `rows` 是 list of dict (Python adapter 把 `rows: list[dict]` 直传),
-   `key` 是 sort 的列名 (`change_pct` / `amount` / `turnover_rate`),
+   `key` 是 sort 的列名 (`close` / `change_pct` / `amount` / `turnover_rate`),
    `descending` 是 bool,`limit` 是返回的 top N。
 3. **`pct_band_rows_kernel` signature**:
    ```rust
@@ -132,12 +144,17 @@ Path A-1 / 0002 (indicator-level) 的双轨测试 + try-import fallback + `_py_*
 
 | Kernel | Output DataFrame columns | rows |
 |---|---|---|
-| `dimension_rank_kernel` | `name: String, count: u32, avg_pct: f64, up_count: u32, down_count: u32, amount: f64, source_field: Option<String>, leader_symbol: String, leader_name: Option<String>, leader_change_pct: Option<f64>` | 1 per group |
-| `top_rows_kernel` | `symbol: String, name: Option<String>, close: Option<f64>, change_pct: Option<f64>, amount: Option<f64>, turnover_rate: Option<f64>, board: String` | top N |
-| `pct_band_rows_kernel` | `label: String, count: u32, pct: f64` | 8 |
+| `dimension_rank_kernel` | `name: String, count: u32, avg_pct: f64, up_count: u32, down_count: u32, amount: f64, source_field: Option<String>, leader_symbol: String, leader_name: Option<String>, leader_change_pct: Option<f64>`(10 cols) | 1 per group |
+| `top_rows_kernel` | `symbol: String, name: Option<String>, close: Option<f64>, change_pct: Option<f64>, amount: Option<f64>, turnover_rate: Option<f64>, board: String`(7 cols) | top N |
+| `pct_band_rows_kernel` | `label: String, count: u32, pct: f64`(3 cols) | 8 (always — empty input → 8 zero-count buckets) |
 
-Adapter 端统一 `df.iter_rows(named=True)` 转 list[dict];对 `dimension_rank`,
-再按 `avg_pct` 排序 + slice 拼 `{"leading": [...], "lagging": [...]}`。
+Adapter 端处理:
+- `top_rows_kernel` / `pct_band_rows_kernel`: `df.iter_rows(named=True)` 转 `list[dict]` 直接返回。
+- `dimension_rank_kernel`(T05 amendment): kernel 输出 flat `leader_symbol / leader_name / leader_change_pct`
+  三列; adapter reshape 成嵌套 `leader: {symbol, name, change_pct}` 字典结构,以匹配
+  `_py_dimension_rank` 的输出 contract(`api/overview.py:359` + daily pipeline 0 改动
+  必备)。然后 `items.sort(key=avg_pct, reverse=True)[:limit]` → `leading`,
+  `items.sort(key=avg_pct)[:limit]` → `lagging`,拼成 `{"leading": [...], "lagging": [...]}`。
 
 ### Module layout (Rust)
 
@@ -174,12 +191,23 @@ backend/app/services/market_overview_builder.py  # MODIFIED
   _dimension_rank(rows, repo, kind, limit, level)  # NEW thin adapter
   build_market_overview(...)                    # UNCHANGED (still calls _dimension_rank)
 
-backend/tests/test_rs_market_overview_seam.py     # NEW
-backend/tests/fixtures/market_overview_dim_240d/
-  parquet subset                                 # 240-day subset of enriched kline
-  data_sources/market_data_source.yaml           # frozen yaml
-  ext_subset/                                    # truncated ext parquet dir
+backend/tests/test_rs_market_overview_seam.py     # NEW (7 tests per T03 §"Seams")
+backend/tests/fixtures/market_overview_dim_240d/    # T03 frozen data_dir subset
+  kline_240d.parquet                            # 38-symbol × 240-day enriched kline
+  rows_snapshot.json                             # 38-row in-memory quote list (latest kline date)
+  ext_data/ext_hy_ths/{config.json,part.parquet}# frozen 38-row 同花顺行业 (5575→38)
+  ext_data/ext_gn_ths/{config.json,part.parquet}# frozen 38-row 同花顺概念 (5581→38)
+  dimension_rank.expected.json                   # bit-identical _py_dimension_rank baseline
+  top_rows.expected.json                        # bit-identical _py_top_rows baseline
+  pct_band_rows.expected.json                   # bit-identical _py_pct_band_rows baseline
 ```
+
+**T05 fixture-layout amendment**: 实际 `data_dir` 形态遵循 `ExtConfigStore.load_all` 的
+扫描路径(per `backend/app/services/ext_data.py:284-311`):从 `data_dir/ext_data/` 下
+每个 `{config_id}/` 子目录读 `config.json`。`_dimension_rank` 不需要顶层 yaml 文件 —
+`ExtConfigStore` 直接扫 `ext_data/`。spec 早期版本写的 `data_sources/market_data_source.yaml`
+是给 `market_data_source` HTTP 数据源(实时 / 日线 / 分钟)用的,**不是** ext 维度的 yaml;
+两者不在同一 schema 下。
 
 ### Algorithm (Rust) — 3 个 kernel
 
@@ -317,15 +345,35 @@ def _dimension_rank(rows, repo, kind, limit=5, level=None):
 ### Seams (where the test lives)
 
 - **Rust unit** `crates/indicators/src/services_market_overview/*/tests`:
-  - `top_rows_kernel`: 1 test (10 rows mixed finite/None values, sort + project)
-  - `pct_band_rows_kernel`: 1 test (100 values, hand-computed 8-bucket counts)
-  - `dimension_rank_kernel`: 1 test (3 groups × 5 stocks, hand-computed leading/lagging)
-- **Python seam** `backend/tests/test_rs_market_overview_seam.py`: 5 tests
-  1. parity: adapter output == `_py_*` reference output on frozen `data_dir` fixture
-  2. fallback: forced `ImportError` → still returns dicts
+  - `top_rows_kernel`: 3 tests (main_path_top5_change_pct_desc — 8 mixed rows
+    [including stable-half-empty], board classification; empty_input_yields_zero_rows;
+    board_classification 10-case exhaustive)
+  - `pct_band_rows_kernel`: 3 tests (main_path_18_values — 18 hand-computed values
+    summing to 100%; boundary_inclusiveness — 7 boundary-value placement; empty_input
+    → 8 zero-count buckets)
+  - `dimension_rank_kernel`: 4 tests (main_path_3_groups_4_stocks_each — Banks/Tech/
+    Consumer with count=1/2/4 exercises avg_pct + up/down + leader paths;
+    leader_zero_pct_wins_over_negative — 0.0% beats negative change_pct;
+    leader_uses_neg_inf_sentinel — None → -inf; empty_groups → 0 rows × 10-col schema)
+- **Python seam** `backend/tests/test_rs_market_overview_seam.py`: **7 tests** (T05 expansion)
+  1. parity: 3 adapter outputs == `_py_*` reference outputs on the 240-day fixture
+     (all bit-identical to expected.json)
+  2. fallback: forced `ImportError` → all 3 adapters return frozen reference;
+     independent `_py_*` direct calls also match (no tautology)
   3. graceful no-op: empty rows → `{"leading": [], "lagging": []}`
-  4. dtype preservation: kernel returns DataFrame with all expected columns + dtypes
-  5. cache eviction: repeated call within TTL returns same dict (Python owns cache)
+  4. graceful no-op: no `ext_data/` directory → empty dict
+  5. graceful no-op: empty input to `_top_rows` / `_pct_band_rows` →
+     `[]` / 8 zero-count buckets
+  6. dtype preservation: kernel output DataFrame has all expected columns + dtypes
+  7. repeat-call parity: 2 independent calls produce structurally equal output
+     (kernel + adapter are stateless per ADR-0006 §5)
+
+**T05 amendment on "cache eviction"**: spec 0003 earlier listed test 5 as "cache eviction
+with TTL". Per ADR-0006 §"5 段"§5 + Q14 (Q15 GRILL decision 11), the kernel + adapter
+are **stateless** (cache owned by Python caller layer, not the adapter). The "cache
+eviction" test name was renamed to "repeat-call parity" — verifies no state leakage
+between calls without claiming a cache that doesn't exist. (Spec §"5 段" §5 caches
+are caller's concern, e.g. `build_market_overview`'s `_build_overview` orchestrator.)
 
 ### Versioning & wheel
 
@@ -424,10 +472,9 @@ def _dimension_rank(rows, repo, kind, limit=5, level=None):
       (also `cargo run` exercises the 3 pure-Rust demo paths: top_rows + pct_band_rows +
       dimension_rank, all produce expected output)
 - [x] No `Cargo.toml` feature flag change required
-- [ ] Ticket 02 adopts the T01 signature recommendation: replace `StockFields`
-      `#[pyclass]` with `HashMap<String, Py<PyAny>>` for `dimension_rank_kernel` parameter.
-      This is a Spec 0003 amendment, not a Spec 0003 violation — the adapter-side
-      Python shape (`groups: list[tuple[str, list[dict]]]`) is unchanged.
+- [x] Ticket 02 adopts the T01 signature recommendation: `HashMap<String, Py<PyAny>>` for
+      `dimension_rank_kernel` parameter (per T05 amendment redline in
+      §"Service-level seam contract" — `StockFields` `#[pyclass]` abandoned).
 
 **Ticket 02 (kernel) — done 2026-10-19 (commits pre-push, worktree-local):**
 
@@ -456,49 +503,71 @@ def _dimension_rank(rows, repo, kind, limit=5, level=None):
       by test `boundary_inclusiveness` (-0.05/-0.03/-0.01/0.0/0.01/0.03/0.05 all
       place correctly into the inclusive-low / exclusive-high bucket)
 
-**Ticket 03 (fixture) — done 2026-10-19:**
+**Ticket 03 (fixture) — done 2026-10-19 (commit `4379fb0`):**
 
-- [ ] `backend/tests/fixtures/market_overview_dim_240d/` committed:
-      - frozen parquet subset (240 days × ~30 symbols)
-      - frozen `data_sources/market_data_source.yaml`
-      - frozen ext parquet subset
-- [ ] `backend/tests/fixtures/gen_market_overview_dim_fixture.py` regenerator committed,
-      deterministic
-- [ ] Fixture includes expected JSON outputs:
-      - `dimension_rank.expected.json` (dict with leading/lagging lists, 5 items each)
-      - `top_rows.expected.json` (list of dicts)
-      - `pct_band_rows.expected.json` (8-bucket list)
+- [x] `backend/tests/fixtures/market_overview_dim_240d/` committed:
+      - `kline_240d.parquet` (38 symbols × 240 trading days, ~414 KB)
+      - `ext_data/ext_hy_ths/{config.json,part.parquet}` (5575 → 38 rows, ~5 KB)
+      - `ext_data/ext_gn_ths/{config.json,part.parquet}` (5581 → 38 rows, ~8 KB)
+      - `rows_snapshot.json` (38-row in-memory quote list, latest kline date)
+      - **No top-level yaml** per T05 amendment — `_dimension_rank` only needs
+        `ext_data/{id}/config.json` (per `ExtConfigStore.load_all`); the data_sources
+        yaml in the original ticket text was for the HTTP realtime/daily source,
+        not the ext-dimension yaml (different schemas).
+- [x] `backend/tests/fixtures/gen_market_overview_dim_fixture.py` regenerator committed,
+      deterministic (hard-coded 38-symbol list + immutable source tree; no RNG;
+      `WORKTREE` overridable via `TICK_STOCK_PANEL_WORKTREE` env var per T05 spec amendment)
+- [x] Fixture includes expected JSON outputs (all bit-identical to `_py_*` outputs):
+      - `dimension_rank.expected.json` — 5 leading + 5 lagging groups (中药 count=2,
+        银行 count=4, 房地产 count=2; leader selection by max `_leader_sort_key`)
+      - `top_rows.expected.json` — 8 rows by `change_pct desc` (top 3: 000333.SZ @ 2.29%,
+        600690.SH @ 2.12%, 000538.SZ @ 2.09%)
+      - `pct_band_rows.expected.json` — 8 buckets summing to 100% (1/3/2/2/2/5/3/2/2/2/3/11
+        counts across <-5%/-5~-3%/-3~-1%/-1~0%/0~1%/1~3%/3~5%/>5%)
 
-**Ticket 04 (Python adapter + 240-day parity) — done 2026-10-19:**
+**Ticket 04 (Python adapter + 240-day parity) — done 2026-10-19 (commit `72af8ea`):**
 
-- [ ] `pytest backend/tests/test_rs_market_overview_seam.py -v` passes (5/5)
-      - bit-identical 240-day parity: adapter output == `_py_*` reference output == expected.json
-      - Forced `ImportError` fallback path verified (independent assertions, no tautology)
-      - 3 graceful no-op triggers (empty rows / no `repo.store.data_dir` / no `ext` rows)
-      - dtype preservation: kernel output DataFrame has all expected columns + dtypes
-        (NaN-aware, matches Spec 0002 test pattern)
-      - cache eviction: repeated call within TTL returns same dict
-- [ ] `pytest backend/tests/test_rs_levels_seam.py -v` passes (4/4, Path A-1 no regression)
-- [ ] `pytest backend/tests/test_rs_extreme_levels_seam.py -v` passes (4/4, Path A-2 no regression)
-- [ ] `pytest backend/tests/test_rs_indicators_seam.py -v` passes (4/4, hello-world no regression)
-- [ ] 17/17 全套 seam tests pass (5 + 4 + 4 + 4)
-- [ ] `cargo test --workspace` all green (3 new + 3 Path A-1/2 + 1 hello-world = 7+ tests)
-- [ ] Real data end-to-end verification: uvicorn restart → `/api/overview?as_of=...` →
-      19 sector calls each returning leading/lagging with bit-identical numbers to
-      pre-migration Python ref
+- [x] `pytest backend/tests/test_rs_market_overview_seam.py -v` passes (7/7 — T05 expansion)
+      - bit-identical 240-day parity: 3 adapter outputs == `_py_*` reference outputs
+        == frozen expected.json (independent assertions)
+      - Forced `ImportError` fallback path: all 3 adapters return frozen reference;
+        independent `_py_*` direct calls also match (no tautology)
+      - 3 graceful no-op triggers (T05 split): empty rows / no `ext_data/` /
+        empty input to `_top_rows` / `_pct_band_rows`
+      - dtype preservation: 3 kernels return DataFrames with all expected columns
+        + dtypes (NaN-aware, matches Spec 0002 test pattern)
+      - repeat-call parity (T05 rename): kernel + adapter are stateless per ADR-0006
+        §"5 段"§5; 2 independent calls produce structurally equal output
+- [x] `pytest backend/tests/test_rs_levels_seam.py -v` passes (4/4, Path A-1 no regression)
+- [x] `pytest backend/tests/test_rs_extreme_levels_seam.py -v` passes (4/4, Path A-2 no regression)
+- [x] `pytest backend/tests/test_rs_indicators_seam.py -v` passes (4/4, hello-world no regression)
+- [x] **19/19** 全套 seam tests pass (7 + 4 + 4 + 4) — exceeds spec's "17/17" target
+      because Path A-3 suite has 7 tests vs spec's 5 (graceful-no-op split + repeat-call).
+- [x] `cargo test --workspace` all green (10 new + 3 Path A-1+3 Pattern A-2 = 16 tests)
+- [x] Real data end-to-end verification: uvicorn `GET /api/overview/market?as_of=2026-10-19`
+      → 200 OK with `industry_rank` 5+5 / `concept_rank` 5+5 / `top_gainers` 8 /
+      `top_losers` 8 / `distribution` 8 — all via the Rust kernels through the
+      thin adapters (verified end-to-end with the live data_dir).
 
-**Ticket 05 (docs closure) — done 2026-10-19:**
+**Ticket 05 (docs closure) — done 2026-10-19 (commit `path-a3-docs-closure`):**
 
-- [ ] This spec's status updated: `Draft → ready-for-agent` → **`Implemented`**, with
-      implementing commit hashes + ADR-0006 cross-ref
-- [ ] ADR-0001 status bump: `seam + second real indicator + service-level in flight`,
+- [x] This spec's status updated: `Draft → ready-for-agent` → **`Implemented`**,
+      with implementing commit hashes (`9300a24` T01 / `b6e5b7f` + `e0b35dc` T02 /
+      `4379fb0` T03 / `72af8ea` T04) + ADR-0006 cross-ref.
+- [x] ADR-0001 status bump: `seam + second real indicator + service-level in flight`,
       with 2026-10-19 changelog referencing ADR-0006 + 5 new Path A-3 tags
-- [ ] Spec 0001/0002 cross-ref updated: "Supersedes by Service-level Path A (Spec 0003 / ADR-0006)"
-- [ ] ADR-0004/0005 cross-ref updated: "Sibling record — Spec 0003 / ADR-0006 covers
-      service-level seam contract; indicator-level decisions unchanged"
-- [ ] CONTEXT.md §"Service-level seam (Path A-3+)" — already added during
-      ADR-0006 authoring
-- [ ] Cross-project memory lessons (if any new from this cycle)
+      (`path-a3-spec-0003`, `path-a3-ticket01-research`, `path-a3-ticket02-kernel`,
+      `path-a3-ticket03-fixture`, `path-a3-ticket04-adapter`).
+- [x] Spec 0001/0002 cross-ref updated: "Supersedes by Service-level Path A
+      (Spec 0003 / ADR-0006)".
+- [x] ADR-0004/0005 cross-ref updated: "Sibling record — Spec 0003 / ADR-0006 covers
+      service-level seam contract; indicator-level decisions unchanged".
+- [x] CONTEXT.md §"Service-level seam (Path A-3+)" — already added during
+      ADR-0006 authoring (commit `0ada10a`).
+- [x] Cross-project memory lessons (if any new from this cycle) — see agent
+      memory note for `f64::max_by` direction, `.into_iter()` → `.iter()`
+      on polars 0.55 ChunkedArray, `raw_close` ≠ prev-day close (back-adjustment
+      factor), PyO3 0.29 `PyObject` → `Py<PyAny>>`.
 
 ## Out-of-Band Followups (Spec 0004+)
 

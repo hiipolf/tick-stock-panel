@@ -358,7 +358,7 @@ def test_dtype_preservation_with_kernel():
 
 
 # =====================================================================
-# 5) Cache eviction / repeated-call parity
+# 5) Repeat-call parity (kernel + adapter are stateless)
 # =====================================================================
 
 def test_repeated_call_returns_structurally_equal_output():

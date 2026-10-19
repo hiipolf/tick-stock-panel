@@ -32,13 +32,16 @@ the hard-coded symbol list + the immutable source tree.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
 
 import polars as pl
 
-WORKTREE = Path(r"D:\AI-Data\路线分析\tmp_cmp\tick-stock-panel-rust-kernel")
+WORKTREE = Path(
+    os.environ.get("TICK_STOCK_PANEL_WORKTREE", r"D:\AI-Data\路线分析\tmp_cmp\tick-stock-panel-rust-kernel")
+)
 sys.path.insert(0, str(WORKTREE / "backend"))
 
 LIVE_DATA_DIR = Path(r"D:/AI-Stock/Stock-Data")
@@ -56,7 +59,7 @@ PCT_BAND_EXPECTED = FIXTURE_DIR / "pct_band_rows.expected.json"
 # leader selection) is meaningfully exercised. All present in ext_hy_ths,
 # ext_gn_ths, and kline_daily_enriched at the regenerator's last-write time.
 # Validated by hand-pick from the live data (5,562 symbols common to all 3 sources).
-SYMBOLS_30: list[str] = [
+SYMBOLS: list[str] = [
     # Banks (6) — exercises avg_pct with multiple stocks per group
     "600000.SH", "600036.SH", "601398.SH", "601939.SH", "601288.SH", "601988.SH",
     # Consumer staples (5) — 白色家电 has 2, 食品 has 2, 乳品 has 1
@@ -87,7 +90,7 @@ def _subset_kline() -> pl.DataFrame:
     frames: list[pl.DataFrame] = []
     for d in date_dirs:
         f = d / "part.parquet"
-        df = pl.read_parquet(f).filter(pl.col("symbol").is_in(SYMBOLS_30))
+        df = pl.read_parquet(f).filter(pl.col("symbol").is_in(SYMBOLS))
         frames.append(df)
     full = pl.concat(frames, how="vertical")
     full = full.sort(["symbol", "date"])
@@ -98,7 +101,7 @@ def _subset_kline() -> pl.DataFrame:
 def _subset_ext_hy() -> pl.DataFrame:
     """Subset ext_hy_ths to 30 symbols; preserve the GBK-encoded Chinese columns."""
     df = pl.read_parquet(LIVE_DATA_DIR / "ext_data" / "ext_hy_ths" / "part.parquet")
-    sub = df.filter(pl.col("symbol").is_in(SYMBOLS_30))
+    sub = df.filter(pl.col("symbol").is_in(SYMBOLS))
     print(f"[regen] ext_hy_ths: {df.shape} -> {sub.shape}")
     return sub
 
@@ -106,7 +109,7 @@ def _subset_ext_hy() -> pl.DataFrame:
 def _subset_ext_gn() -> pl.DataFrame:
     """Subset ext_gn_ths to 30 symbols."""
     df = pl.read_parquet(LIVE_DATA_DIR / "ext_data" / "ext_gn_ths" / "part.parquet")
-    sub = df.filter(pl.col("symbol").is_in(SYMBOLS_30))
+    sub = df.filter(pl.col("symbol").is_in(SYMBOLS))
     print(f"[regen] ext_gn_ths: {df.shape} -> {sub.shape}")
     return sub
 

@@ -17,7 +17,7 @@
 //!
 //! The kernel does NOT sort by `avg_pct` — that's the adapter's job (leading/lagging).
 //!
-//! Output schema: 9 columns × 1 row per group (groups with no `changes` skipped).
+//! Output schema: 10 columns × 1 row per group (groups with no `changes` skipped).
 
 use polars::prelude::*;
 use pyo3::prelude::*;
@@ -41,14 +41,11 @@ fn leader_sort_key(r: &StockRow) -> f64 {
 
 /// Extract one stock row from a Python dict (mirror of `_finite` semantics).
 fn extract_stock(dict: &HashMap<String, Py<PyAny>>, py: Python<'_>) -> StockRow {
-    let finite = |obj: Option<&Py<PyAny>>| -> Option<f64> {
-        obj.and_then(|v| v.extract::<f64>(py).ok()).filter(|f| f.is_finite())
-    };
     StockRow {
         symbol: dict.get("symbol").and_then(|v| v.extract::<String>(py).ok()),
         name: dict.get("name").and_then(|v| v.extract::<String>(py).ok()),
-        change_pct: finite(dict.get("change_pct")),
-        amount: finite(dict.get("amount")),
+        change_pct: super::finite(dict.get("change_pct"), py),
+        amount: super::finite(dict.get("amount"), py),
     }
 }
 
