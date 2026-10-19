@@ -1,17 +1,33 @@
 # ADR 0001 — Rust Kernel Path A: Scope
 
 Date: 2026-10-18 (initial)
-Updated: 2026-10-19 (status bump after Spec 0001 implemented)
-Status: **Accepted (seam + first real indicator)**
+Updated: 2026-10-19 (status bump after Spec 0001 + Spec 0002 implemented)
+Status: **Accepted (seam + second real indicator)**
 
 > **Changelog 2026-10-19**: status 由 `seam-only` 升到 `seam + first real
-> indicator`。`levels._support_resistance`(Spec 0001)已完整迁完:
-> kernel 在 `crates/indicators/src/levels.rs`,thin adapter 在
+> indicator`(Spec 0001 / ADR-0004),再升到 `seam + second real indicator`
+> (Spec 0002 / ADR-0005)。
+>
+> **`levels._support_resistance`** (Spec 0001): production kernel 在
+> `crates/indicators/src/levels.rs`,thin adapter 在
 > `backend/app/indicators/levels.py::_support_resistance`,240-day
 > fixture parity bit-identical。详见 [ADR-0004](0004-levels-migration.md)
-> + 8 个 milestone tag(`path-a-hello-world` → `path-a-ticket03-fixes`)。
-> 本 ADR 的原 "seam-only" 措辞被 ADR-0004 覆盖,但 seam 仍是最优先的
-> invariant(任何 kernel 必须先通过 seam 验证再谈业务逻辑)。
+> + 8 个 milestone tag(`path-a-hello-world` → `path-a-ticket04-closure`)。
+>
+> **`levels._extreme_levels`** (Spec 0002): production kernel 在
+> `crates/indicators/src/extreme_levels.rs`,thin adapter 在
+> `backend/app/indicators/levels.py::_extreme_levels`,240-day
+> fixture parity bit-identical + multi-window `[60, 250]` 参数化。详见
+> [ADR-0005](0005-extreme-levels-migration.md)+ 5 个新 milestone tag
+> (`path-a2-spec-0002` → `path-a2-ticket04-closure`)。
+>
+> 累计 12/12 seam tests pass(Path A-1 4 + Path A-2 4 + hello-world 4);
+> uvicorn 在真实 `D:/AI-Stock/Stock-Data` 数据上验证 Rust kernel 输出
+> 8 个 extreme dicts(60日/250日 高低点 + 4 个 swing 前高前低)+ 3 个
+> sr dicts(POC 10.91 / dense 10.97 / dense 10.84)。
+>
+> 本 ADR 的原 "seam-only" 措辞被 ADR-0004 / ADR-0005 覆盖,但 seam
+> 仍是最优先的 invariant(任何 kernel 必须先通过 seam 验证再谈业务逻辑)。
 
 ## 上下文 (Context)
 
