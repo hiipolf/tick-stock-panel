@@ -247,7 +247,7 @@ def _leader_sort_key(row: dict) -> float:
     return value if value is not None else float("-inf")
 
 
-def _dimension_rank(rows: list[dict], repo, kind: str, limit: int = 5, level: int | None = None) -> dict:
+def _py_dimension_rank(rows: list[dict], repo, kind: str, limit: int = 5, level: int | None = None) -> dict:
     if not rows:
         return {"leading": [], "lagging": []}
 
@@ -316,7 +316,7 @@ def _dimension_rank(rows: list[dict], repo, kind: str, limit: int = 5, level: in
 # Top 行 / 涨跌幅分桶
 # ================================================================
 
-def _top_rows(rows: list[dict], key: str, descending: bool, limit: int = 8) -> list[dict]:
+def _py_top_rows(rows: list[dict], key: str, descending: bool, limit: int = 8) -> list[dict]:
     filtered = [r for r in rows if _finite(r.get(key)) is not None]
     filtered.sort(key=lambda r: _finite(r.get(key)) or 0, reverse=descending)
     return [
@@ -333,7 +333,7 @@ def _top_rows(rows: list[dict], key: str, descending: bool, limit: int = 8) -> l
     ]
 
 
-def _pct_band_rows(values: list[float]) -> list[dict]:
+def _py_pct_band_rows(values: list[float]) -> list[dict]:
     bands = [
         ("<-5%", None, -0.05),
         ("-5~-3%", -0.05, -0.03),
@@ -357,6 +357,151 @@ def _pct_band_rows(values: list[float]) -> list[dict]:
                 count += 1
         out.append({"label": label, "count": count, "pct": count / total * 100})
     return out
+
+
+# ================================================================
+# Rust 适配器 (Path A-3 / Spec 0003 / ADR-0006 §"5 段")
+# ================================================================
+#
+# `_top_rows` / `_pct_band_rows` / `_dimension_rank` 是 `_py_*` 的 try-import
+# 薄壳:优先调 Rust kernel,Rust 失败 (ImportError 或运行时异常) → fallback 到
+# `_py_*`。3 个 helper 不变,仅 `_py_*` 仍是纯 Python 实现。
+#
+# Seam contract(ADR-0006 §"5 段"):
+#   1. Adapter pre-aggregate (reads parquet + yaml + ext; builds groups)
+#   2. Multi-arg kernel signature (no DataFrame-in)
+#   3. Kernel pure-compute; no IO
+#   4. Kernel returns DataFrame (Rust → Python via pyo3-polars)
+#   5. Adapter slices / projects; cache owned by Python (caller layer)
+#
+# Caller signatures unchanged → `build_market_overview` (line 552-560) 仍按
+# 原名调用,无 0 改动迁移路径。
+# ================================================================
+
+
+def _top_rows(rows: list[dict], key: str, descending: bool, limit: int = 8) -> list[dict]:
+    """Thin adapter — `tf_rs_indicators.top_rows_kernel` with `_py_top_rows` fallback.
+
+    Per ADR-0006 §"5 段": kernel pure-compute on `rows: list[dict]` (already
+    pre-aggregated by caller — the rows param is the in-memory quote list
+    from `build_market_overview`). No IO on the kernel side.
+    """
+    try:
+        from tf_rs_indicators import top_rows_kernel
+    except ImportError:
+        return _py_top_rows(rows, key, descending, limit)
+    out_df = top_rows_kernel(rows, key, descending, limit)
+    return list(out_df.iter_rows(named=True))
+
+
+def _pct_band_rows(values: list[float]) -> list[dict]:
+    """Thin adapter — `tf_rs_indicators.pct_band_rows_kernel` with `_py_pct_band_rows` fallback.
+
+    Per ADR-0006 §"5 段": kernel pure-compute on `values: list[float]` (change_pct
+    extracted upstream by `build_market_overview` line 588). No IO on the kernel side.
+    """
+    try:
+        from tf_rs_indicators import pct_band_rows_kernel
+    except ImportError:
+        return _py_pct_band_rows(values)
+    out_df = pct_band_rows_kernel(values)
+    return list(out_df.iter_rows(named=True))
+
+
+def _dimension_rank(rows: list[dict], repo, kind: str, limit: int = 5, level: int | None = None) -> dict:
+    """Thin adapter — `tf_rs_indicators.dimension_rank_kernel` with `_py_dimension_rank` fallback.
+
+    Per ADR-0006 §"5 段":
+      1. Pre-aggregate: adapter reads yaml + ext_data (Python IO), builds
+         `groups: list[(group_name, [stock_dict])]` from `_py_dimension_rank`'s
+         inner body (extracted verbatim).
+      2. Multi-arg kernel call: `dimension_rank_kernel(groups, limit, source_fields)`.
+      3. Kernel pure-compute on groups → DataFrame with per-group reduce
+         (count, avg_pct, up_count, down_count, amount, leader_*).
+      4. Adapter slices: `leading = sorted(items, key=avg_pct, reverse=True)[:limit]`,
+         `lagging = sorted(items, key=avg_pct)[:limit]` (matches `_py_dimension_rank`).
+
+    Empty rows → `{"leading": [], "lagging": []}` (matches `_py_dimension_rank`).
+    """
+    if not rows:
+        return {"leading": [], "lagging": []}
+    try:
+        from tf_rs_indicators import dimension_rank_kernel
+    except ImportError:
+        return _py_dimension_rank(rows, repo, kind, limit, level)
+
+    # Pre-aggregate (verbatim from _py_dimension_rank body).
+    quote_map: dict[str, dict] = {}
+    for row in rows:
+        symbol = str(row.get("symbol") or "").strip().upper()
+        if not symbol:
+            continue
+        quote_map[symbol] = row
+        quote_map[symbol.split(".", 1)[0]] = row
+
+    store = ExtConfigStore(repo.store.data_dir)
+    groups_dict: dict[str, dict[str, dict]] = {}
+    group_source: dict[str, str] = {}
+    for config in store.load_all():
+        field = _dimension_field(config, kind)
+        if not field:
+            continue
+        source_field = f"{config.id}.{field}"
+        for ext_row in _read_ext_rows(repo.store.data_dir, config, field):
+            quote = None
+            for key in _symbol_keys(ext_row, config):
+                quote = quote_map.get(key)
+                if quote:
+                    break
+            if not quote:
+                continue
+            symbol = str(quote.get("symbol") or "")
+            for value in _dimension_values(ext_row.get(field)):
+                if level is not None and "-" in value:
+                    parts = value.split("-")
+                    value = parts[level - 1] if level <= len(parts) else parts[-1]
+                groups_dict.setdefault(value, {})[symbol] = quote
+                group_source.setdefault(value, source_field)
+
+    # Regroup for kernel: list[(group_name, [stock_dict])]; parallel source_fields
+    # Vec carries the `group_source` map through (kernel doesn't know what to do with
+    # it — adapter doesn't pre-render because source_field is a Python-side concept;
+    # passing None keeps the kernel signature uniform while making the field
+    # available if a future spec needs it).
+    groups_list: list[tuple[str, list[dict]]] = [
+        (name, list(by_symbol.values())) for name, by_symbol in groups_dict.items()
+    ]
+    source_fields_list: list[Optional[str]] = [
+        group_source.get(name) for name, _ in groups_list
+    ]
+
+    out_df = dimension_rank_kernel(groups_list, limit, source_fields_list)
+    items = list(out_df.iter_rows(named=True))
+
+    # Re-shape kernel's flat `leader_*` columns → `_py_dimension_rank`'s nested
+    # `leader: {symbol, name, change_pct}` dict so caller signatures (and the
+    # frozen fixture JSON) are unchanged.
+    shaped = [
+            {
+                "name": row["name"],
+                "count": row["count"],
+                "avg_pct": row["avg_pct"],
+                "up_count": row["up_count"],
+                "down_count": row["down_count"],
+                "amount": row["amount"],
+                "source_field": row.get("source_field"),
+                "leader": {
+                    "symbol": row["leader_symbol"],
+                    "name": row["leader_name"],
+                    "change_pct": row["leader_change_pct"],
+                },
+            }
+            for row in items
+        ]
+
+    leading = sorted(shaped, key=lambda x: x["avg_pct"], reverse=True)[:limit]
+    lagging = sorted(shaped, key=lambda x: x["avg_pct"])[:limit]
+    return {"leading": leading, "lagging": lagging}
 
 
 # ================================================================
