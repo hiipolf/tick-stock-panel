@@ -282,62 +282,126 @@ def _pivot_points(df: pl.DataFrame) -> list[dict]:
 # 3. 前高 / 前低 —— 60 / 120 / 250 日极值
 # ================================================================
 
-def _extreme_levels(df: pl.DataFrame) -> list[dict]:
-    """关键前高 / 前低 —— 历史极值 + 近期 swing 高低点(收敛后)。
+def _reduce_extreme_levels(
+    sh: list[bool], sl: list[bool],
+    highs: list[float | None], lows: list[float | None],
+    close: float | None,
+    ext60h: float, ext60l: float, ext250h: float, ext250l: float,
+) -> list[dict]:
+    """Reduce swing + windowed extremes to list[dict] (Spec 0002 §"Algorithm (Rust)").
 
-    设计:把所有"前高前低"类点位集中在本组,与 sr(通道)区分:
-      - 60 日极值:近一季度高低点(短期参照)
-      - 250 日极值:年度高低点(牛熊分界参照);跳过 120 日(被 250 日包含,信息冗余)
-      - swing 高低点:近期局部转折点,每侧只取距当前价最近的 2 个
+    Shared between the pure-Python reference (`_py_extreme_levels`) and the
+    Rust-kernel path (`_extreme_levels`): the kernel does the swing scan + the
+    60/250 folds, this helper does the 60/250 emission + swing aggregation
+    (±1% / 距当前价最近 2 个). Mirrors the original `_extreme_levels` lines
+    158-191 (60/250 emit) + lines 194-217 (swing aggregation).
+    """
+    out: list[dict] = []
+
+    # 60 / 250 窗口极值(共享)
+    for w, h, l in ((60, ext60h, ext60l), (250, ext250h, ext250l)):
+        if _ok(h):
+            out.append({"value": round(h, 2), "label": f"{w}日新高",
+                        "type": "extreme", "side": "resistance", "strength": "strong"})
+        if _ok(l):
+            out.append({"value": round(l, 2), "label": f"{w}日新低",
+                        "type": "extreme", "side": "support", "strength": "strong"})
+
+    # swing aggregation(从 caller 拿到的 boolean series 过滤)
+    if close is not None and sh:
+            swing_high_vals: list[float] = [float(highs[i]) for i in range(len(sh)) if sh[i] and highs[i] is not None]
+            swing_low_vals:  list[float] = [float(lows[i])  for i in range(len(sl)) if sl[i] and lows[i]  is not None]
+
+            agg_h = _aggregate_levels(swing_high_vals, 0.01)
+            agg_h = [v for v in agg_h if v > close * 1.001]
+            agg_h.sort(key=lambda v: abs(v - close))
+            for v in agg_h[:2]:
+                out.append({"value": round(v, 2), "label": "前高",
+                            "type": "extreme", "side": "resistance", "strength": "medium"})
+
+            agg_l = _aggregate_levels(swing_low_vals, 0.01)
+            agg_l = [v for v in agg_l if v < close * 0.999]
+            agg_l.sort(key=lambda v: abs(v - close))
+            for v in agg_l[:2]:
+                out.append({"value": round(v, 2), "label": "前低",
+                            "type": "extreme", "side": "support", "strength": "medium"})
+
+    return out
+
+
+def _py_extreme_levels(df: pl.DataFrame) -> list[dict]:
+    """关键前高 / 前低 —— pure-Python reference (Spec 0002).
+
+    1:1 port of the original `_extreme_levels` body. The reduce tail (60/250
+    emit + swing aggregation) is shared with the Rust-kernel path via
+    `_reduce_extreme_levels`. Bit-identical output to the original.
     """
     if df.is_empty():
         return []
     close = float(df.tail(1)["close"][0]) if "close" in df.columns else None
-    out: list[dict] = []
 
-    # —— 历史极值(只取 60 / 250,避免中间档冗余)——
-    for n in (60, 250):
-        if df.height < n:
+    # 60 / 250 窗口极值(直接算)
+    ext: dict[int, tuple[float, float]] = {}
+    for w in (60, 250):
+        if df.height < w:
+            ext[w] = (float("nan"), float("nan"))
             continue
-        sub = df.tail(n)
-        hi = float(sub["high"].max())
-        lo = float(sub["low"].min())
-        if _ok(hi):
-            out.append({"value": round(hi, 2), "label": f"{n}日新高",
-                        "type": "extreme", "side": "resistance", "strength": "strong"})
-        if _ok(lo):
-            out.append({"value": round(lo, 2), "label": f"{n}日新低",
-                        "type": "extreme", "side": "support", "strength": "strong"})
+        sub = df.tail(w)
+        ext[w] = (float(sub["high"].max()), float(sub["low"].min()))
 
-    # —— 近期 swing 高低点(每侧只取距当前价最近的 2 个,避免点位爆炸)——
+    # swing 检测(原 loop 1:1)
     win = 5
+    sh: list[bool] = []
+    sl: list[bool] = []
     if df.height > win * 2 and close:
         highs = df["high"].to_list()
         lows = df["low"].to_list()
-        swing_highs: list[float] = []
-        swing_lows: list[float] = []
+        sh = [False] * len(highs)
+        sl = [False] * len(lows)
         for i in range(win, len(highs) - win):
-            if highs[i] == max(highs[i - win:i + win + 1]):
-                swing_highs.append(float(highs[i]))
-            if lows[i] == min(lows[i - win:i + win + 1]):
-                swing_lows.append(float(lows[i]))
+            if _ok(highs[i]) and highs[i] == max(highs[i - win:i + win + 1]):
+                sh[i] = True
+            if _ok(lows[i]) and lows[i] == min(lows[i - win:i + win + 1]):
+                sl[i] = True
 
-        # 聚合 ±1% 相近价位,再按距当前价排序取最近 2 个
-        agg_h = _aggregate_levels(swing_highs, 0.01)
-        agg_h = [v for v in agg_h if v > close * 1.001]
-        agg_h.sort(key=lambda v: abs(v - close))
-        for v in agg_h[:2]:
-            out.append({"value": round(v, 2), "label": "前高",
-                        "type": "extreme", "side": "resistance", "strength": "medium"})
+    return _reduce_extreme_levels(
+        sh, sl,
+        df["high"].to_list() if sh else df["high"].to_list(),
+        df["low"].to_list()  if sl else df["low"].to_list(),
+        close,
+        ext[60][0], ext[60][1], ext[250][0], ext[250][1],
+    )
 
-        agg_l = _aggregate_levels(swing_lows, 0.01)
-        agg_l = [v for v in agg_l if v < close * 0.999]
-        agg_l.sort(key=lambda v: abs(v - close))
-        for v in agg_l[:2]:
-            out.append({"value": round(v, 2), "label": "前低",
-                        "type": "extreme", "side": "support", "strength": "medium"})
 
-    return out
+def _extreme_levels(df: pl.DataFrame) -> list[dict]:
+    """关键前高 / 前低 —— thin adapter (try Rust kernel, fall back to pure-Python).
+
+    Seam contract (Spec 0002, Ticket 03): public signature unchanged so the
+    caller in `compute_levels` stays untouched. On a machine with the
+    `tf_rs_indicators` wheel installed (`uv sync --extra rs && maturin develop
+    --release`), this dispatches to the Rust kernel. Otherwise it falls back
+    to the pure-Python reference for graceful degradation on bare-bones CI.
+    """
+    if df.is_empty():
+        return []
+    close = float(df.tail(1)["close"][0]) if "close" in df.columns else None
+    try:
+        from tf_rs_indicators import extreme_levels as _rs_extreme_levels
+    except ImportError:
+        return _py_extreme_levels(df)
+
+    out_df = _rs_extreme_levels(df, None, 5)
+    sh = out_df.get_column("swing_high").to_list()
+    sl = out_df.get_column("swing_low").to_list()
+    highs = df["high"].to_list()
+    lows = df["low"].to_list()
+    return _reduce_extreme_levels(
+        sh, sl, highs, lows, close,
+        float(out_df["extreme_60_high"][0]),
+        float(out_df["extreme_60_low"][0]),
+        float(out_df["extreme_250_high"][0]),
+        float(out_df["extreme_250_low"][0]),
+    )
 
 
 # ================================================================
