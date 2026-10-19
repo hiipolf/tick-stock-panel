@@ -50,6 +50,19 @@ legacy-cpu = [
     "polars[rtcompat]>=1.44,<1.45",
 ]
 
+# Rust kernel build toolchain — `tf-rs-kernel` is built by `maturin develop`
+# from `crates/indicators/`. Enable with: `uv sync --extra rs && cd crates/indicators
+# && maturin develop --release`. CI / bare-bones envs without Rust toolchain
+# can skip this and rely on the pure-Python fallback in
+# `backend/app/indicators/levels.py::_py_support_resistance` (the Rust
+# kernel auto-imports via try-import in `_support_resistance`; see
+# `docs/adr/0002-rust-kernel-bindings.md` §5 and `docs/adr/0004-levels-migration.md`).
+# Version pinned to match the maturin used in development (1.15.0 at
+# commit `9b5b370`).
+rs = [
+    "maturin>=1.15,<2.0",
+]
+
 # vectorbt 还会引入绘图、交互组件等完整分析栈，仍保持为可选 extras。
 # Matrix 引擎只直接依赖上面的 numba/llvmlite 编译内核。
 # 启用:`uv sync --extra backtest`

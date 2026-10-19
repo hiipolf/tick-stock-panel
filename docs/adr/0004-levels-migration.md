@@ -143,6 +143,73 @@ Cargo build 不需要重跑 vendor 链路(`vendor/` 留着无害)。
   - `path-a-ticket03-adapter` (adapter + 240-day parity)
   - `path-a-ticket03-fixes` (helper + test fixes)
 
+## Reproducibility(给下一个 dev / 下一个 indicator 移植者的清单)
+
+Per-machine rebuild on a fresh box(Windows / Linux / macOS,2026-10-19 起):
+
+### 必备工具链
+
+1. **Python 3.11+** — system 或 `uv python install 3.11`
+2. **Rust 1.98.1** — `rustup` 装好后进仓库自动 activate(`rust-toolchain.toml` pin)
+3. **C toolchain**:
+   - Windows: Visual Studio Build Tools(MSVC `link.exe` + Windows SDK)
+   - Linux: `build-essential`
+   - macOS: Xcode Command Line Tools
+4. **`uv`** + **`maturin`**:
+   ```bash
+   pip install uv
+   uv sync --extra rs   # 装 maturin + 全部 Python deps(含 polars 1.44.2)
+   ```
+
+### 编译并装上 Rust kernel
+
+第一次 ~4 分钟(release 模式 + vendored polars 冷编译),后续 ~30 秒增量:
+
+```bash
+cd crates/indicators
+maturin develop --release
+```
+
+### Smoke test
+
+```bash
+python -c "import polars as pl, tf_rs_indicators; \
+  df = pl.DataFrame({'high':[12.0]*30,'low':[10.0]*30, \
+                     'volume':[100.0]*30,'turnover_rate':[0.0]*30}); \
+  out = tf_rs_indicators.support_resistance(df, 5); \
+  assert 'chip_pct' in out.columns and out.height == 30, out"
+pytest backend/tests/test_rs_levels_seam.py -v   # 4/4 pass(240-day parity bit-identical)
+pytest backend/tests/test_rs_indicators_seam.py -v   # 4/4 pass(sum_close 无回归)
+cargo test --workspace   # 3/3 pass(Rust kernel 单测)
+```
+
+### 不装 Rust 的环境
+
+CI / 裸机会自动 fallback 到 `_py_support_resistance`(chart 仍能渲染,只是
+切股票 spike 回来)。`try-import tf_rs_indicators → ImportError` 走 fallback
+分支是 ADR-0002 §5 的硬契约,所有 4 个 seam test 都验过这条路径。
+
+## Pre-merge checklist(本 ADR 落 main 之前必过)
+
+merge `rust-kernel-path-a` → `main` 之前 **必过** 6 项:
+
+- [x] `main` 自 `c16aef9` 后无新提交(避免 silent conflict)
+- [x] `.github/workflows/` 不含未支持的 `cargo` / `maturin` step(已查,只有 `docker.yml` + `release.yml`,无 Rust)
+- [x] `pyproject.toml` `[project.optional-dependencies] rs` 含 `maturin>=1.15,<2.0`(2026-10-19 commit `d17971b` 加)
+- [x] `rust-toolchain.toml` 入库(已 commit `9877c4e`)
+- [x] `Cargo.lock` 入库(同上)
+- [x] 8 个 milestone tag 全部推到 remote:`git push origin --tags` × 1 推全部
+
+合并命令(选其一):
+- **A — fast-forward(推荐)**:`git checkout main && git merge rust-kernel-path-a --ff-only`
+  - 8 个 milestone tag + ADR-0004 已提供完整 Path A 时间线 anchor
+  - main HEAD 与 worktree HEAD 同(`d17971b`),`git log --oneline main` 即 Path A 完整时间线
+- **B — no-ff(留 merge commit)**:保留 "Path A first cut" 语义 commit
+  - merge commit message 引用 ADR-0004 + 8 个 tag
+
+复刻本 checklist:下一个 spec(per Further Notes,factor / signal kernel 迁移)
+**复制本节作为 template**,新增"路径"和"实现 commits / tag 链"。
+
 ## Further Notes
 
 - **未来 ticket 候选**(不在本 ADR scope,但同 spec 0001 §"Out-of-Band Followups"):
