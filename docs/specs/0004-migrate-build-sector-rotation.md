@@ -333,3 +333,121 @@ Ticket 05 (docs closure), not as a new ADR.
   Path A (Spec 0004 / ADR-0006 + amendment)". ADR-0004 / 0005 / 0006 cross-ref
   "Sibling record — Spec 0004 / ADR-0006 amendment covers multi-kernel service-level
   seam contract; indicator-level decisions unchanged".
+
+## Acceptance Checklist
+
+> Mirrors Spec 0003 §"Acceptance Checklist" pattern (Path A-3 T01 commit `9300a24`
+> added the same section to Spec 0003 freeze-time; Path A-4 freeze commit `71ceae6`
+> deferred the append here to T01 commit time per Path A-3 rhythm).
+
+**Ticket 01 (research) — done 2026-10-19 (commit `path-a4-ticket01-research`):**
+
+- [x] `docs/research/build_sector_rotation-rust-api.md` committed (21 885 bytes; **8 cited
+      `polars 0.55.2` source excerpts** with `path:line` cites + 8-kernel signature table
+      + Path A-3 lessons reuse notes table; per-Path-A-3-T01 mirror structure)
+- [x] Signature recommendation: **NO SEMANTIC CHANGE REQUIRED** — only wording refinements:
+      `Path` → `PathBuf` (kernels 2/3/4 row 1, because `&Path` has no PyO3 0.29.3
+      `FromPyObject` impl per `pyo3-0.29.3/src/conversions/std/path.rs:15-32`);
+      `pl.Series` / `pl.DataFrame` / `str` → `PySeries` / `PyDataFrame` / `String`
+      (output column, because PyO3 wrapper types required for `#[pyfunction]` returns
+      per `pyo3-polars-0.28.0/src/types.rs:42, :254` and
+      `pyo3-0.29.3/src/conversions/std/string.rs:148`).
+- [x] Kernel 2 implementation note (NOT a signature change, T02 attention):
+      `prev_daily_close_kernel`'s `target_date` is the date *whose previous close*
+      is wanted (not the close of `target_date` itself), per Path A-3 agent memory
+      entry `raw_close ≠ previous trading day's close`. T02 must read parquet for
+      `target_date - 1 business day` OR use the explicit `prev_close` column if the
+      parquet schema provides one.
+- [x] `crates/indicators/examples/research_build_sector_rotation_api.rs` committed
+      (26 517 bytes; 8 `#[pyfunction]` stubs with T01's signatures + synthetic
+      30-symbol × 1-day fixture + `fn main()` exercising all 8 kernels); `cargo check
+      --example research_build_sector_rotation_api -p tf-rs-indicators` exits 0;
+      `cargo run --example research_build_sector_rotation_api` produces correct
+      output per kernel (verified: `bare_kernel` stub signature compiles; kernels
+      2/3/4 synthesize 30-row / 7200-row / 1920-row `DataFrame`s with declared schemas;
+      kernels 5/6 produce 1-row × 7-col / 0×4 schemas; kernel 8 produces 5
+      `sort_by` branches × 8 sectors)
+- [x] No `Cargo.toml` feature flag changes; `Cargo.lock` unchanged; no new
+      dependencies (reuses workspace `polars` + `pyo3` + `pyo3-polars`)
+- [x] Path A-3 5 lessons reuse notes populated in research doc §"Path A-3 lessons reuse notes":
+      `Polars 0.55 ListChunked` (kernels 1/6/7), `PowerShell Start-Process 包装器的伪 timeout`
+      (T01 verification commands), `Polars 0.55 ChunkedArray::into_iter() removed`
+      (kernels 5/6/7), `Iterator::max_by closure arg order` (kernel 8 sort logic),
+      `raw_close ≠ previous trading day's close` (kernel 2 prev-close lookup)
+- [x] **Ticket 02 adopts the T01 recommendation**: use `PathBuf` (not `&Path`) for
+      kernels 2/3/4; use `PySeries` / `PyDataFrame` / `String` for returns; kernel 2
+      must handle the `target_date - 1 business day` parquet read (do NOT one-line
+      `read_parquet(target_date)`)
+- [x] No production kernel implementation (defer to T02)
+
+**Ticket 02 (kernel) — pending 2026-10-19 (blocked by T01):**
+
+- [ ] 8 production kernels in
+      `crates/indicators/src/services_sector_rotation/{bare,prev_daily_close,minute_pcts,sector_flow,per_bucket_reduce,timeline,cross_events,rank_for_mode}.rs`
+      (each uses T01's wording-refined signatures)
+- [ ] `mod.rs` subdir + 8 `wrap_pyfunction!` registrations in `crates/indicators/src/lib.rs`
+      (total cdylib = **14 functions**: 1 hello-world `sum_close` + 3 Path A-3 +
+      2 Path A-1/2 + 8 Path A-4)
+- [ ] 16-22 `#[cfg(test)] mod tests` per Spec 0004 §"Test plan" (2-3 per kernel per Q13=b)
+- [ ] `cargo test -p tf-rs-indicators --lib services_sector_rotation` 16-22/22 pass
+- [ ] `cargo test --workspace --lib` all green (no Path A-1/2/3 regression; 16 + 16-22 = 32-38 total)
+- [ ] `maturin develop --release` rebuilds wheel; `import tf_rs_indicators` exposes **14 funcs**
+- [ ] Smoke-test all 8 kernels via synthetic fixture
+- [ ] No `Cargo.toml` feature flag changes; `Cargo.lock` unchanged
+
+**Ticket 03 (fixture) — pending 2026-10-19 (blocked by T02):**
+
+- [ ] `backend/tests/fixtures/build_sector_rotation_5d/{kline_minute_subset/<5 dates>/part.parquet, ext_data/industry/<id>/{config.json,part.parquet}, data_sources/market_data_source.yaml, expected.json}` committed
+- [ ] ~36K minute rows × 30 symbols × 5 trading days (~5× Path A-3 fixture)
+- [ ] `backend/tests/fixtures/gen_build_sector_rotation_fixture.py` regenerator
+      (deterministic, no RNG, `WORKTREE` env override per T05 amendment convention)
+- [ ] 2 regenerator runs produce identical SHA-256 of `expected.json` (determinism guard)
+- [ ] `_py_build_sector_rotation(fixture_args)` output byte-equal to `expected.json`
+      (independent of the regenerator's own evaluation)
+- [ ] No fixture file individually exceeds 2 MB (no LFS needed)
+
+**Ticket 04 (adapter + parity) — pending 2026-10-19 (blocked by T02 + T03):**
+
+- [ ] `backend/app/services/sector_rotation.py::build_sector_rotation` body modified
+      to 10-step thin adapter (validation → cache check → short-circuit → 4 IO kernels
+      → 2 pre-aggregate → 3 reduce kernels → sort kernel → output assembly → cache
+      write → return)
+- [ ] 6 `_py_*` private aliases for fallback (per Q5=b preserves public name)
+- [ ] `backend/tests/test_rs_sector_rotation_seam.py` **5 tests** pass per Q13=b:
+      bit-identical 5-day parity / forced `ImportError` fallback / 3 graceful no-op
+      triggers / dtype preservation / cache eviction
+- [ ] Path A-1/2/3 19 seam tests no regression
+- [ ] uvicorn `GET /api/sector-rotation?kind=concept&bucket_minutes=5` returns **200 OK**
+      with all 5 sections (`timeline` + `cross_events` + `sectors` + `series` + `universe`)
+      via Rust kernels (end-to-end smoke)
+- [ ] Public `build_sector_rotation` signature unchanged — `git diff backend/app/api/sector_rotation.py`
+      returns empty (only body changed; signature + decorators byte-identical)
+- [ ] 30+ existing `backend/tests/test_sector_rotation.py` tests pass **0 changes** (Q5=b)
+
+**Ticket 05 (closure) — pending 2026-10-19 (blocked by T04):**
+
+- [ ] ADR-0006 §"5 段"§1 in-place amendment per T01's proposed text:
+      `Path` → `PathBuf`, `pl.Series` → `PySeries`, `pl.DataFrame` → `PyDataFrame`,
+      `str` → `String`; plus kernel 2 implementation note (`target_date - 1 business day`
+      parquet read)
+- [ ] ADR-0006 §"5 段"§1 also clarifies: `polars::prelude::PlParquetReader::new(pathbuf).finish()?`
+      is the polars-crate-internal IO call that satisfies the "kernel pure-compute on the
+      resulting DataFrame" invariant — adapter still responsible for passing validated
+      `PathBuf` values
+- [ ] ADR-0001 fourth status bump + Changelog final entry (Path A-4 implementation landed)
+- [ ] Cross-project memory entries for any new Path A-4 lessons (e.g., `polars 0.55
+      PlParquetReader::new().finish() PyO3 cross-boundary pattern` if a parsing pitfall
+      emerged in T02)
+- [ ] Tag `path-a4-docs-closure` annotated, with T01-T04 commit hashes + final test counts
+- [ ] worktree clean (`git status --short` shows only `target/` untracked)
+
+## Out-of-Band Followups (Spec 0005+)
+
+- Path A-5: `regime_builder._compute_batch` (Spec 0005) — reuses Path A-4's
+  multi-kernel seam template (8-kernel pattern + 5-day fixture template +
+  dual-track testing scaffold) directly
+- Path A-6: `mining_candidates._scan_*` (Spec 0006)
+- New crate `crates/services/` if kernel count grows beyond ~14 — defer
+- Bench harness: quantify "Dashboard 19 calls × 1ms vs current 95ms spike" — separate cycle
+- Cache invalidation strategy review — Python TTL + LRU pattern fine; defer
+  until telemetry shows it's a problem
