@@ -380,20 +380,36 @@ Ticket 05 (docs closure), not as a new ADR.
       `read_parquet(target_date)`)
 - [x] No production kernel implementation (defer to T02)
 
-**Ticket 02 (kernel) — pending 2026-10-19 (blocked by T01):**
+**Ticket 02 (kernel) — done 2026-10-19 (commits pre-push, worktree-local):**
 
-- [ ] 8 production kernels in
+- [x] 8 production kernels in
       `crates/indicators/src/services_sector_rotation/{bare,prev_daily_close,minute_pcts,sector_flow,per_bucket_reduce,timeline,cross_events,rank_for_mode}.rs`
       (each uses T01's wording-refined signatures)
-- [ ] `mod.rs` subdir + 8 `wrap_pyfunction!` registrations in `crates/indicators/src/lib.rs`
+- [x] `mod.rs` subdir + 8 `wrap_pyfunction!` registrations in `crates/indicators/src/lib.rs`
       (total cdylib = **14 functions**: 1 hello-world `sum_close` + 3 Path A-3 +
       2 Path A-1/2 + 8 Path A-4)
-- [ ] 16-22 `#[cfg(test)] mod tests` per Spec 0004 §"Test plan" (2-3 per kernel per Q13=b)
-- [ ] `cargo test -p tf-rs-indicators --lib services_sector_rotation` 16-22/22 pass
-- [ ] `cargo test --workspace --lib` all green (no Path A-1/2/3 regression; 16 + 16-22 = 32-38 total)
-- [ ] `maturin develop --release` rebuilds wheel; `import tf_rs_indicators` exposes **14 funcs**
-- [ ] Smoke-test all 8 kernels via synthetic fixture
-- [ ] No `Cargo.toml` feature flag changes; `Cargo.lock` unchanged
+- [x] 22 `#[cfg(test)] mod tests` per Spec 0004 §"Test plan" (2/2/3/2/3/2/2/6 per kernel per Q13=b)
+- [x] `cargo test -p tf-rs-indicators --lib services_sector_rotation` **22/22 pass**
+- [x] `cargo test --workspace --lib` all green — **38 tests total** (16 Path A-1/2/3 + 22 Path A-4, no regression)
+- [x] `maturin develop --release` rebuilds wheel (.pyd 25,510,912 bytes / +5.65 MB over Path A-3's 19,857,408);
+      Python `import tf_rs_indicators` exposes **14 functions**:
+      `bare_kernel`, `cross_events_kernel`, `dimension_rank_kernel`, `extreme_levels`, `minute_pcts_kernel`,
+      `pct_band_rows_kernel`, `per_bucket_reduce_kernel`, `prev_daily_close_kernel`,
+      `rank_for_mode_kernel`, `sector_flow_kernel`, `sum_close`, `support_resistance`,
+      `timeline_kernel`, `top_rows_kernel`.
+- [x] Smoke-test all 8 kernels via synthetic fixture (`.scratch/smoke_test_path_a4.py`):
+      8/8 pass; each kernel returns its declared schema with documented column types.
+- [x] No `Cargo.toml` feature flag changes; `Cargo.lock` unchanged (reused workspace `polars` + `pyo3` + `pyo3-polars`)
+
+**T02 divergence from Spec 0004 §"8 Rust kernels" kernel 5 output schema**:
+`per_bucket_reduce_kernel` outputs a 7-column SCALAR schema
+(`bucket` / `leader` / `leader_pct` / `market_pct` / `n_members` / `cross_up` / `cross_down`)
+instead of the spec's 8-column `List`-typed schema
+(`bucket` / `names: List(Str)` / `pcts: List(Float64)` / `top_set: List(Str)` / ...).
+The Python adapter reconstructs `names` / `pcts` by joining back to `by_sector_df`
+per `(bucket, member)` at T04 stage; `top_set` is implicit in the `n_members` count.
+This divergence is documented for T05 closure to address (likely a minor Spec 0004
+wording adjustment).
 
 **Ticket 03 (fixture) — pending 2026-10-19 (blocked by T02):**
 
