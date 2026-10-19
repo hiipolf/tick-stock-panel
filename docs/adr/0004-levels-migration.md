@@ -1,7 +1,8 @@
 # ADR 0004 — `levels._support_resistance` Rust 迁移
 
 Date: 2026-10-19
-Status: **Accepted**
+Status: **Accepted** (sibling record; Path A-3+ service-level seam contract
+covered by [ADR-0006](0006-service-level-rust-migration.md))
 Tracking: Spec 0001 (now Implemented)
 Supersedes: ADR-0001 的 "seam-only" scope 表述(从 0 真实业务逻辑 → 1 个真实指标)
 Implements: Spec 0001 §"Solution" / §"Implementation Decisions"

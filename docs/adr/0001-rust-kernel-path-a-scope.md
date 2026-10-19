@@ -1,12 +1,13 @@
 # ADR 0001 — Rust Kernel Path A: Scope
 
 Date: 2026-10-18 (initial)
-Updated: 2026-10-19 (status bump after Spec 0001 + Spec 0002 implemented)
-Status: **Accepted (seam + second real indicator)**
+Updated: 2026-10-19 (status bump after Spec 0001 + Spec 0002 + ADR-0006)
+Status: **Accepted (seam + second real indicator + service-level in flight)**
 
 > **Changelog 2026-10-19**: status 由 `seam-only` 升到 `seam + first real
 > indicator`(Spec 0001 / ADR-0004),再升到 `seam + second real indicator`
-> (Spec 0002 / ADR-0005)。
+> (Spec 0002 / ADR-0005),再扩到 `seam + second real indicator + service-level
+> in flight`(Spec 0003 / ADR-0006)。
 >
 > **`levels._support_resistance`** (Spec 0001): production kernel 在
 > `crates/indicators/src/levels.rs`,thin adapter 在
@@ -21,13 +22,23 @@ Status: **Accepted (seam + second real indicator)**
 > [ADR-0005](0005-extreme-levels-migration.md)+ 5 个新 milestone tag
 > (`path-a2-spec-0002` → `path-a2-ticket04-closure`)。
 >
-> 累计 12/12 seam tests pass(Path A-1 4 + Path A-2 4 + hello-world 4);
+> **`services.market_overview_builder._dimension_rank` + 2 helpers** (Spec 0003 /
+> ADR-0006): service-level Path A pilot — 多参数 kernel signature,Python owns
+> IO + cache, 5-segment service-level seam contract。Spec 写完(Spec 0003 status
+> `Implemented`),seam contract freeze 在 ADR-0006,glossary 锁在 CONTEXT.md
+> §"Service-level seam (Path A-3+)"。5 个 Path A-3 milestone tag
+> (`path-a3-spec-0003` → `path-a3-ticket05-closure`)待实现时设。
+>
+> 累计 12/12 indicator-level seam tests pass(Path A-1 4 + Path A-2 4 + hello-world 4);
 > uvicorn 在真实 `D:/AI-Stock/Stock-Data` 数据上验证 Rust kernel 输出
 > 8 个 extreme dicts(60日/250日 高低点 + 4 个 swing 前高前低)+ 3 个
 > sr dicts(POC 10.91 / dense 10.97 / dense 10.84)。
 >
-> 本 ADR 的原 "seam-only" 措辞被 ADR-0004 / ADR-0005 覆盖,但 seam
+> 本 ADR 的原 "seam-only" 措辞被 ADR-0004 / ADR-0005 / ADR-0006 覆盖,但 seam
 > 仍是最优先的 invariant(任何 kernel 必须先通过 seam 验证再谈业务逻辑)。
+> service-level seam 是 indicator-level seam 的超集:同样服务 IO + cache 在 Python,
+> kernel pure-compute;不同处是 multi-arg kernel signature + pre-aggregate
+> 阶段(per ADR-0006 §"5 段")。
 
 ## 上下文 (Context)
 

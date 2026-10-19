@@ -23,6 +23,26 @@
 - **try-import fallback** — Python 端用 `try: from tf_rs_indicators import sum_close except ImportError: sum_close = None` 的退化策略。`uv sync` 默认装;`uv sync --extra rs` 显式装 wheel 时激活 Rust 路径;CI / 无 Rust 工具链环境自动回退到原 Polars 实现。
 - **`extras = ["rs"]`** — `pyproject.toml` 中 `tf-rs-kernel` 的可选依赖组,标记 maturin wheel。生产/CI 默认不装;开发者/特定机器显式开。
 
+## Service-level seam (Path A-3+)
+
+> Spec 0001 / 0002 迁的指标函数(indicator-level)输入是单一 `polars.DataFrame`。
+> Service-level 函数(从 Path A-3 开始)输入是**服务对象**(repo / quote_service / ExtConfigStore 等)
+> + 多个数据源,Python adapter 必须做 pre-aggregate + IO, kernel 只做 pure-compute。
+> 决策见 ADR-0006 / Spec 0003。本节只定义术语。
+
+- **service-level function** — `backend/app/services/*.py` 下的纯函数(无 Request 依赖),如 `_dimension_rank`、`build_sector_rotation`。区别于 indicator-level:依赖 IO(读 parquet/yml)+ 多个数据源(dict-of-dict),不只单一 DataFrame。
+- **service-level seam contract** — service-level 函数的 Rust 迁移协议。固定 5 段:
+  1. **Pre-aggregate 由 Python adapter 负责**:adapter 调现有 Python 端的 IO helper(如 `ExtConfigStore.load_all()` + `_read_ext_rows()`)构造 pre-aggregate 中间态;
+  2. **Rust kernel signature 是多参数**:`fn kernel(pre_aggregate: ..., scalars: ..., scalars: ...) -> DataFrame`,不是单一 df;
+  3. **Kernel 只接受 structured pure-compute input**:所有 IO / cache 状态 / DB lookup 都在 Python 端完成, kernel 不直接读 filesystem;
+  4. **Rust kernel 返回 DataFrame**:adapter 端 `df.iter_rows(named=True)` 转 `list[dict]`,跟 indicator 级 path (1) 同模式;
+  5. **Cache 归属 Python**:任何 service-level cache(`_cache` / `_cache_ts` / TTL)由 Python 维护, kernel 不持有状态(per ADR-0002 §5 spirit)。
+- **pre-aggregate input** — Python adapter 给 kernel 的结构化输入。形态是 list / dict / DataFrame 之一(按 kernel 需求),但所有 filesystem / DB / network 访问都在 pre-aggregate 阶段完成, kernel 不再碰 IO。
+- **kernel 不能直接读 filesystem** — Rust kernel 的输入不允许包含 `Path` 或任何 IO 句柄。Adapter 必须把 filesystem 内容序列化进 pre-aggregate, kernel 只读已加载数据。
+- **cache ownership = Python** — 任何 LRU / in-memory state 在 Python 模块级(`_cache: dict`, `_cache_ts: dict[tuple, float]`)。Kernel 调用不修改 cache, 也不读 cache。Adapter 在 kernel 调用前自检 cache, 命中则 skip kernel。
+- **3-tuple output shape** — `list[dict]` 的每个 dict 含 str / float 混合类型。kernel 返回 DataFrame(列 = dict 的 key 集合, dtype = 各 key 的 Python type), adapter `iter_rows(named=True)` 转 list[dict]。
+- **frozen parquet test fixture** — service-level seam test 不再像 indicator 级只用 240-day frozen parquet; 还需 frozen `data/data_sources/*.yaml` + frozen ext parquet 子集,构成完整 frozen `data_dir`。Adapter 通过 mock `repo.store.data_dir` 指向 frozen dir。
+
 ## 版本与工具链
 
 - **Rust toolchain pin** — `rust-toolchain.toml` 锁 `1.98.1`(含 clippy / rustfmt)。轮转:Polars 1.44.x 已知依赖图要求 `rustc >= 1.95`,1.98.1 是当前本机可复现稳定版。
@@ -56,3 +76,5 @@
 
 - 决策 1-3(scope) → `docs/adr/0001-rust-kernel-path-a-scope.md`
 - 决策 4-9(bindings / fallback / testing) → `docs/adr/0002-rust-kernel-bindings.md`
+- Service-level seam contract 决策 → `docs/adr/0006-service-level-rust-migration.md`
+- Service-level 第一个目标 (`_dimension_rank` + 2 helpers) 实施计划 → `docs/specs/0003-migrate-market-overview-dimension-rank.md`

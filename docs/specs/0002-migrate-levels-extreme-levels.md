@@ -4,6 +4,12 @@
 > Author: Path A-2 (post Path A-1 / Spec 0001 closure at commit `d17971b`).
 > Status: **Implemented** (was `Draft → ready-for-agent`)
 > Tracking: TF-RS-1 (Polars 0.55.2 patches) + this spec (extreme_levels migration)
+> **Supersedes by Service-level Path A**: same relationship as Spec 0001.
+> This spec's seam pattern (multi-column DataFrame out, single-arg kernel, thin
+> adapter) is a **subset** of the 5-segment service-level seam contract in
+> [Spec 0003](0003-migrate-market-overview-dimension-rank.md) /
+> [ADR-0006](../adr/0006-service-level-rust-migration.md). The service-level
+> extension is forward only — this spec's decisions are unchanged.
 > Predecessor: [Spec 0001](../specs/0001-migrate-levels-support-resistance.md) (Path A-1 — `_support_resistance` migration), [ADR-0004](../adr/0004-levels-migration.md)
 
 ## Problem Statement

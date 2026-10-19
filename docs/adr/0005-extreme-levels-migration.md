@@ -1,7 +1,8 @@
 # ADR 0005 — `levels._extreme_levels` Rust 迁移 (Path A-2)
 
 Date: 2026-10-19
-Status: **Accepted**
+Status: **Accepted** (sibling record; Path A-3+ service-level seam contract
+covered by [ADR-0006](0006-service-level-rust-migration.md))
 Tracking: Spec 0002 (now Implemented)
 Supersedes: ADR-0001 / ADR-0004 的 "first real indicator" 表述 (从 1 个真实指标 → 2 个)
 Implements: Spec 0002 §"Solution" / §"Implementation Decisions"

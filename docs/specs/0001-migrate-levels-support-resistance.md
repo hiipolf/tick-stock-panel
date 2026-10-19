@@ -4,6 +4,11 @@
 > Author: grill-with-docs Phase 1 + Path A 0.55.2 vendoring prep.
 > Status: **Implemented** (was `Draft → ready-for-agent`)
 > Tracking: TF-RS-1 (Polars 0.55.2 patches) + this spec (Levels migration)
+> **Supersedes by Service-level Path A**: this spec's seam pattern (one PyDataFrame in,
+> one PyDataFrame out, single-arg kernel, thin adapter) is a **subset** of the
+> 5-segment service-level seam contract in [Spec 0003](0003-migrate-market-overview-dimension-rank.md)
+> / [ADR-0006](../adr/0006-service-level-rust-migration.md). The service-level
+> extension is forward only — this spec's decisions are unchanged.
 > Implemented in: `rust-kernel-path-a` worktree, commits `9b5b370` (kernel) →
 > `92604cd` (1:1 port fixes) → `c800612` (adapter + 240-day parity) →
 > `f7c62ef` (helper + test fixes). See [ADR-0004](../adr/0004-levels-migration.md)
