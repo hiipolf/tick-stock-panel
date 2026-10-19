@@ -3,7 +3,8 @@
 Date: 2026-10-18 (initial)
 Updated: 2026-10-19 (status bump after Spec 0001 + Spec 0002 + ADR-0006)
 Updated: 2026-10-19 (status bump to **`Service-level seam contract landed`** after Spec 0003 + ADR-0006 close)
-Status: **Accepted (indicator-level + service-level seam contracts landed)**
+Updated: 2026-10-19 (Path A-4 spec freeze: multi-kernel service-level seam contract spec'd in Spec 0004, **implementation in flight**)
+Status: **Accepted (indicator-level + service-level seam contracts landed; multi-kernel service-level seam spec'd in Spec 0004, pending implementation)**
 
 > **Changelog 2026-10-19**: status 由 `seam-only` 升到 `seam + first real
 > indicator`(Spec 0001 / ADR-0004),再升到 `seam + second real indicator`
@@ -30,6 +31,18 @@ Status: **Accepted (indicator-level + service-level seam contracts landed)**
 > §"Service-level seam (Path A-3+)")。5 个 Path A-3 milestone tag
 > (`path-a3-spec-0003` → `path-a3-ticket04-adapter`)已落地;
 > `path-a3-docs-closure` 在 Ticket 05 commit。
+>
+> **`sector_rotation.build_sector_rotation` + 5 helpers** (Spec 0004 /
+> ADR-0006 §"5 段"§1 amendment pending): Path A-4 first **multi-kernel**
+> service-level migration pilot — 一 public Python function + 5 helpers 拆为
+> 8 Rust kernels (4 IO helper + per_bucket_reduce + timeline + cross_events
+> + rank_for_mode), 1 thin adapter 编排 10-step orchestration, 缓存下沉在
+> adapter。Seam contract 5 段仍适用;ADR-0006 §"5 段"§1 的 in-place amendment
+> (IO kernel 接受 `Path`,polars crate 内部 parquet read OK) 在 T05 closure
+> commit 处理。Spec freeze 在 commit `path-a4-spec-0004` (2026-10-19),
+> glossary 在 CONTEXT.md §"Multi-kernel service-level seam (Path A-4+)"。
+> 5 个 Path A-4 milestone tag 待启动 (`path-a4-spec-0004` 起,
+> `path-a4-ticket01-research`...`path-a4-docs-closure`)。
 >
 > 累计 **19/19** seam tests pass(4 hello-world + 4 Path A-1 + 4 Path A-2 + 7
 > Path A-3);16/16 cargo tests pass(`tf_rs_indicators` 内)。uvicorn 在真实

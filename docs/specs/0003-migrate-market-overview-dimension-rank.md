@@ -571,7 +571,7 @@ are caller's concern, e.g. `build_market_overview`'s `_build_overview` orchestra
 
 ## Out-of-Band Followups (Spec 0004+)
 
-- Path A-4: `build_sector_rotation._compute` (Spec 0004) — reuses this spec's seam contract
+- Path A-4: `build_sector_rotation` + 5 helpers (Spec 0004) — **Status: `Ready-for-agent`** (commit `path-a4-spec-0004`, 2026-10-19). First **multi-kernel** service-level migration pilot: 8 Rust kernels (4 IO helper + per_bucket_reduce + timeline + cross_events + rank_for_mode) replacing one Python public function + 5 helpers. Reuses this spec's 5-segment seam contract; ADR-0006 §"5 段"§1 amendment planned (Path A-4 IO helper kernels accept `Path` parameter for polars-internal parquet read; amendment in T05 closure). 5 implementation tickets T01-T05 待启动。
 - Path A-5: `regime_builder._compute_batch` (Spec 0005)
 - Path A-6: `mining_candidates._scan_*` (Spec 0006)
 - New crate `crates/services/` if kernel count grows beyond ~10 — defer until A-4/A-5 in

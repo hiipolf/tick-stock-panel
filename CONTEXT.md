@@ -43,6 +43,17 @@
 - **3-tuple output shape** — `list[dict]` 的每个 dict 含 str / float 混合类型。kernel 返回 DataFrame(列 = dict 的 key 集合, dtype = 各 key 的 Python type), adapter `iter_rows(named=True)` 转 list[dict]。
 - **frozen parquet test fixture** — service-level seam test 不再像 indicator 级只用 240-day frozen parquet; 还需 frozen `data/data_sources/*.yaml` + frozen ext parquet 子集,构成完整 frozen `data_dir`。Adapter 通过 mock `repo.store.data_dir` 指向 frozen dir。
 
+## Multi-kernel service-level seam (Path A-4+)
+
+> Path A-4 是首个**多 kernel** 服务级迁移(`build_sector_rotation` + 5 helpers → 8 Rust kernels)。Service-level seam contract 的 5 段仍适用;新增 multi-kernel orchestration + IO kernel `Path` 接受约定。决策见 Spec 0004 §"Implementation Decisions" + ADR-0006 §"5 段"§1 amendment。
+
+- **multi-kernel migration** — 一个 Python service-level public function 拆成 N 个 Rust kernel(N ≥ 3),每个 kernel 处理函数内某一 phase(IO / pre-aggregate / reduce / sort)。Adapter 编排 N 次 kernel 调用 + Python glue,组装最终输出。Path A-4 是首个 pilot(8 kernels: 4 IO helper + per_bucket_reduce + timeline + cross_events + rank_for_mode)。
+- **IO helper kernel** — multi-kernel migration 中的 IO phase kernel。Path A-4: 4 个(`bare_kernel` + `prev_daily_close_kernel` + `minute_pcts_kernel` + `sector_flow_kernel`),每个独立读取单一 parquet 文件,返回 `DataFrame`。入参包含 `Path`(adapter 校验后传入)。
+- **reduce kernel** — multi-kernel migration 中的 reduce / sort phase kernel。Path A-4: 4 个(`per_bucket_reduce_kernel` + `timeline_kernel` + `cross_events_kernel` + `rank_for_mode_kernel`)。接收 IO kernel 输出 + Python pre-aggregate 输入,返回 reduce 结果(纯计算)。
+- **PyDataFrame round-trip kernel input** — IO kernel 的入参含 `PyDataFrame`,跨边界零拷贝往返。**替代** Path A-3 §"kernel 不能直接读 filesystem" 的严格规定,改为:`polars::prelude::ParquetReader::read(Path)` 在 kernel 内调用是被允许的,因为 `polars` crate 自己 handle IO;kernel 仍然是"pure-compute on the resulting DataFrame"。ADR-0006 §"5 段"§1 amendment 在 T05 closure 时 in-place 改。
+- **adapter orchestration sequence** — multi-kernel migration 的 adapter 实现顺序:validation → cache check → empty / no-data short-circuit → IO kernel calls (×N) → Python pre-aggregate sections (×2) → reduce kernel calls (×M) → sort kernel call → output assembly → cache write → return。Path A-4 是 10 步;后续 multi-kernel migration 可重用此骨架。
+- **kernels stateless** — N 个 kernel 之间无状态;每个 kernel 调用 independent + repeatable;adapter 在 cache miss 时串行调用,cache hit 时 0 kernel call。任何 caching / LRU 在 adapter 层,内核不持有状态(per ADR-0006 §"5 段"§5)。
+
 ## 版本与工具链
 
 - **Rust toolchain pin** — `rust-toolchain.toml` 锁 `1.98.1`(含 clippy / rustfmt)。轮转:Polars 1.44.x 已知依赖图要求 `rustc >= 1.95`,1.98.1 是当前本机可复现稳定版。
