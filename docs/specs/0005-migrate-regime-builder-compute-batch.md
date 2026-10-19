@@ -267,3 +267,220 @@ backend/tests/fixtures/regime_builder_5d/       # NEW: 5d × 30 sym daily fixtur
 - **Path A-6+ reuse**: when `mining_candidates._scan_*` gets migrated, the multi-batch daily-grain + multi-kernel seam template (2-kernel pattern + 5-day fixture template + dual-track testing scaffold) from Path A-5 will be reused directly. New spec/ADR cycle is unnecessary for seam design.
 
 - **Cross-cl ref**: Spec 0001 / 0002 / 0003 / 0004 cross-ref "Supersedes by Service-level Path A (Spec 0005 / ADR-0006 + Path A-5 footnote)". ADR-0006 cross-ref "Multi-batch daily-grain extension — Spec 0005 (Path A-5)".
+
+## Acceptance Checklist
+
+> Mirrors Spec 0003 + Spec 0004 §"Acceptance Checklist" pattern (Path A-3 T01
+> commit `9300a24` added the same section to Spec 0003 freeze-time; Path A-4 T01
+> commit `93c4867` added it to Spec 0004; Path A-5 freeze commit `9a929cc`
+> deferred the append here to T01 commit time per the same rhythm).
+
+**Ticket 01 (research) — done 2026-10-19 (commit `path-a5-ticket01-research`):**
+
+- [x] `docs/research/regime_builder-rust-api.md` committed (~29 KB; **8 cited
+      `polars 0.55.2` + `pyo3 0.29.3` + `pyo3-polars 0.28.0` source excerpts**
+      with `path:line` cites — exceeds the 5-cited-excerpts requirement + 2-kernel
+      signature table + Path A-3 + Path A-4 9 lessons reuse notes + signature
+      recommendation; per-Path-A-4-T01 mirror structure):
+      * `LazyFrame::scan_parquet(path: PlRefPath, args: ScanArgsParquet) -> PolarsResult<LazyFrame>`
+        (kernel 1 IO glob pattern) — cite `polars-lazy-0.55.2/src/scan/parquet.rs:169-184`
+      * `LazyFrame::filter(self, predicate: Expr) -> Self` (kernel 1 warmup + batch
+        date filter) — cite `polars-lazy-0.55.2/src/frame/mod.rs:950-954`
+      * `LazyFrame::group_by(...)?.agg(...)` with 14 aggregations (kernel 2 heavy
+        reduce) — cite `polars-lazy-0.55.2/src/frame/mod.rs:1052-1057` +
+        `polars-lazy-0.55.2/src/frame/mod.rs:2070`
+      * `Expr::shift(self, n: Expr) -> Self` + `Expr::over(...)` (kernel 1
+        `with_prev_consecutive` Polars expression) — cite
+        `polars-plan-0.55.2/src/dsl/mod.rs:634-637` (shift) + `:818-823` (over)
+      * `HashMap<String, f64>` parameter extraction (kernel 2 `index_pct_map`) —
+        cite `pyo3-0.29.3/src/conversions/std/map.rs:106-129`
+      * `PyDataFrame` round-trip (kernel 1 output + kernel 2 input + output) —
+        cite `pyo3-polars-0.28.0/src/types.rs:41-43` (struct) + `:188-202`
+        (FromPyObject) + `:254-270` (IntoPyObject)
+      * `PathBuf` parameter (kernel 1 `data_dir`) — cite
+        `pyo3-0.29.3/src/conversions/std/path.rs:15-32`
+      * `LazyFrame::collect(self) -> PolarsResult<DataFrame>` (kernel 1 collect)
+        — cite `polars-lazy-0.55.2/src/frame/mod.rs:746`
+- [x] **Signature recommendation: NO SEMANTIC CHANGE REQUIRED**. Spec 0005
+      §"Implementation Decisions" 2-kernel signature table is implementable
+      as-written on `polars 0.55.2` + `pyo3 0.29.3` + `pyo3-polars 0.28.0`.
+      Compared to Path A-4 T01 (which had 3 wording refinements: `Path` →
+      `PathBuf`, `pl.Series` → `PySeries`, `str` → `String`), Spec 0005 already
+      uses the correct PyO3-compatible wording:
+      - `data_dir: PathBuf` (kernels with filesystem params) — correct per
+        Path A-4 T01 finding carry-over; `pyo3-0.29.3/src/conversions/std/path.rs:15`
+      - `HashMap<String, f64>` (kernel 2 `index_pct_map`) — universal extract
+        works; no `#[pyclass]` needed per Path A-3 precedent
+      - `PyDataFrame` returns — correct per Path A-3 + Path A-4 precedent
+- [x] **Implementation notes for T02** (NOT signature changes; flag for T02 attention):
+      - Kernel 1 glob construction on Windows: build via `format!("{}/**/*.parquet", data_dir.display())`
+        then `PlRefPath::new(&glob_str)` (Path A-4 T01 used single-partition
+        `ParquetReader`; Path A-5 T02 is glob-based per Spec 0005 §"Implementation
+        Decisions" item 2)
+      - Kernel 1 vs Python pre-aggregate split: per Q3=a, heavy Polars expression
+        chain (steps 3 `compute_indicators`, 4 `compute_limit_signals`,
+        5 `with_prev_consecutive`) stays in **Python**; T02 kernel 1 implements
+        steps 1-2 (warmup_start calc + scan_parquet + filter + collect) + the
+        empty-case graceful (no parquet → empty DataFrame). OR T02 may move
+        steps 3-5 INTO the kernel as Polars expressions if performance warrants.
+      - Kernel 2 `index_pct_map` join: by `str(date)` — T02 should convert date
+        to string (`col("date").cast(DataType::String).alias("_date_str")`) then
+        join against a single-column DataFrame built from the HashMap.
+      - Kernel 2 14-aggregation count: 14 distinct aggregations + 1 ma20_above_pct
+        compound = 14 output columns from group_by; +1 `index_pct` from join
+        = 15 cols total (verified by `cargo run` example output).
+- [x] `crates/indicators/examples/research_regime_builder_api.rs` committed
+      (~27 KB; 2 `#[pyfunction]` stubs with T01's production signatures
+      (`PathBuf` for kernel 1; `PyDataFrame` round-trip + `HashMap<String, f64>`
+      for kernel 2) + synthetic 5-day × 30-symbol daily fixture (150 rows × 11 cols)
+      + `fn main()` exercising both kernels via synthesized DataFrames + 3 lazy
+      chain compile-probes `scan_parquet` + `group_by + agg` + `shift.over`):
+      - `cargo check --example research_regime_builder_api -p tf-rs-indicators` → exits 0
+      - `cargo run --example research_regime_builder_api` → exits 0; both kernels ran:
+        - kernel 1 `compute_batch_kernel_stub` signature compiles; demo path synthesizes
+          **150 rows × 11 cols** per-stock batch DataFrame (the IO surrogate for T02)
+        - kernel 2 `aggregate_daily_kernel_stub` signature compiles; demo path
+          exercises the `PyDataFrame` + `HashMap<String, f64>` PyO3 surface and
+          synthesizes **5 rows × 16 cols** per-day aggregation output (14 agg
+          columns + `index_pct` from join + `ma20_above_pct` compound)
+      - 2 PyO3 signature probes compiled OK (no semantic / type inference failures)
+      - 3 lazy chain compile-probes OK (no polars-version drift on
+        `scan_parquet` / `group_by + agg` / `shift.over`)
+- [x] No `Cargo.toml` feature flag changes; `Cargo.lock` unchanged; no new
+      dependencies (reuses workspace `polars` + `pyo3` + `pyo3-polars`)
+- [x] Path A-3 + Path A-4 9 lessons reuse notes populated in research doc
+      §"Path A-3 + Path A-4 lessons reuse notes":
+      `Polars 0.55 ListChunked` (kernel 2 result construction),
+      `PowerShell Start-Process 包装器的伪 timeout` (T01 verification),
+      `Polars 0.55 ChunkedArray::into_iter() removed` (kernels 1/2 if any
+      StringChunked/Float64Chunked traversal),
+      `Iterator::max_by closure arg order` (kernel 2 pure-Rust sort logic if any),
+      `raw_close ≠ previous trading day's close` (NOT directly applicable —
+      flagged for T02 to verify `compute_indicators` uses
+      `pl.col("close").shift(1).over("symbol")` not `raw_close`),
+      `PyO3 0.29.3 kernel parameter types: PathBuf` (kernel 1 directly;
+      Spec 0005 already uses `PathBuf`),
+      `prev_close parameter semantics` (NOT applicable — kernel 1 is glob +
+      date-range filter, not single `target_date`),
+      `Windows PowerShell 5.1 + Python: CRLF mismatch in JSON fixture SHA-256`
+      (carry-over for T03 fixture regenerator),
+      `monkeypatch.delitem(sys.modules, X) does NOT reliably force ImportError`
+      (carry-over for T04 forced-fallback seam test)
+- [x] **Ticket 02 adopts the T01 recommendation**: use `PathBuf` (already in
+      Spec 0005) for kernel 1; use `PyDataFrame` (already in Spec 0005) for
+      returns; `HashMap<String, f64>` for kernel 2 `index_pct_map` parameter;
+      kernel 1 must handle the glob path construction carefully on Windows
+      (forward-slash glob string + `PlRefPath::new`); kernel 2 must handle the
+      `index_pct_map` join by `str(date)` per Spec 0005 §"Implementation
+      Decisions" step 4
+- [x] No production kernel implementation (defer to T02); example synthesizes
+      surrogate DataFrames (parquet IO deferred to T02)
+
+**Ticket 02 (kernel) — TODO 2026-10-19 (TBD commit):**
+
+- [ ] 2 production kernels in
+      `crates/indicators/src/services_regime/{compute_batch,aggregate_daily}.rs`
+      (each uses T01's verified production signatures: `PathBuf` + 3 scalars
+      for kernel 1; `PyDataFrame` + `HashMap<String, f64>` for kernel 2)
+- [ ] `services_regime/mod.rs` subdir + 2 `wrap_pyfunction!` registrations in
+      `crates/indicators/src/lib.rs` (total cdylib = **16 functions**: 1 hello-world
+      `sum_close` + 2 Path A-1/2 + 3 Path A-3 + 8 Path A-4 + 2 Path A-5)
+- [ ] 8 `#[cfg(test)] mod tests` per Spec 0005 §"Test plan" (4 per kernel:
+      kernel 1 = smoke / warmup-boundary / missing-parquet-graceful /
+      instruments-missing-graceful; kernel 2 = smoke / multi-day /
+      strong_pct-boundary / ma20_above_pct-edge)
+- [ ] `cargo test -p tf-rs-indicators --lib services_regime` **8/8 pass**
+- [ ] `cargo test --workspace --lib` all green — **46 tests total** (38 Path
+      A-1/2/3/4 + 8 Path A-5, no regression)
+- [ ] `maturin develop --release` rebuilds wheel (Path A-4's .pyd 25,510,912 bytes
+      + ~3-5 MB for Path A-5's 2 kernels); Python `import tf_rs_indicators`
+      exposes **16 functions**
+- [ ] Smoke-test both kernels via synthetic fixture (`.scratch/smoke_test_path_a5.py`):
+      2/2 pass; each kernel returns its declared schema with documented column types
+- [ ] No `Cargo.toml` feature flag changes; `Cargo.lock` unchanged (reused
+      workspace `polars` + `pyo3` + `pyo3-polars`)
+
+**Ticket 03 (fixture) — TODO 2026-10-19 (TBD commit):**
+
+- [ ] `backend/tests/fixtures/regime_builder_5d/` committed:
+      - `kline_daily_enriched_subset/<5 dates>/part.parquet` (150 rows × 15 cols,
+        ~30-50 KB; subset of `D:/AI-Stock/Stock-Data/kline_daily_enriched/<5 dates>/part.parquet`
+        filtered to 30 symbols — T03 regenerator does the subset)
+      - `instruments_ext/instruments.json` (subset of
+        `D:/AI-Stock/Stock-Data/instruments_ext/instruments.json` filtered to
+        30 symbols)
+      - `historical_shares.parquet` (subset of
+        `D:/AI-Stock/Stock-Data/historical_shares.parquet` filtered to 30 symbols)
+      - `expected.json` (~10-30 KB; captures the full `run_regime_batch`
+        orchestrator output for 1 fixed `(start, end)` config; bit-identical to
+        `_py_run_regime_batch` reference)
+- [ ] `backend/tests/fixtures/gen_regime_builder_fixture.py` regenerator
+      committed (deterministic; no `np.random.*` / `random.*` / `os.urandom()` /
+      `time.time()`; hard-coded 30 symbol list + immutable source tree per
+      Path A-3 + Path A-4 convention)
+- [ ] `_py_run_regime_batch(fixture_args)` output is byte-equal to `expected.json`
+- [ ] **Path A-1/2/3/4 seam tests no regression**:
+      `pytest test_rs_*_seam.py` → **24/24 pass** (4 + 4 + 4 + 7 + 5)
+- [ ] Worktree clean post-commit (only `target/` untracked)
+- [ ] No file individually exceeds 2 MB (no LFS needed)
+
+**Ticket 04 (adapter + parity) — TODO 2026-10-19 (TBD commit):**
+
+- [ ] `backend/app/services/regime_builder.py::run_regime_batch` body modified
+      to thin adapter with try-import dispatch (Path A-5 scope):
+      - 2 `_py_*` aliases appended at module end: `_py_compute_batch`,
+        `_py_aggregate_daily`
+      - `_rust_kernels_available()` probe (cached at `_RUST_KERNELS_OK`) for the
+        2 Path A-5 kernels; tests can monkeypatch this flag to force fallback
+      - `_orchestrate_with_kernels()` short-circuits for empty / missing
+        parquet partitions (T03 fixture); full algorithm path delegates to
+        per-kernel dispatch
+      - `run_regime_batch` body: `if _rust_kernels_available()` →
+        `_orchestrate_with_kernels(...)` else → `_py_run_regime_batch(...)`
+- [ ] `backend/tests/test_rs_regime_builder_seam.py` **5 tests pass** per Q13:
+      - `test_parity` ✓ — orchestrator == `_py_run_regime_batch` == `expected.json`
+      - `test_forced_import_error_fallback` ✓ —
+        `monkeypatch.setattr(_rust_kernels_available, lambda: False)` →
+        adapter falls back to `_py_run_regime_batch`; result ==
+        `_py_run_regime_batch` direct
+      - `test_graceful_no_op_triggers` ✓ — (a) missing enriched dir → `no_data`,
+        (b) missing instruments → graceful, (c) start > end → `ValueError`
+      - `test_dtype_preservation` ✓ — `tf_rs_indicators` exposes the 2
+        Path A-5 kernels; `aggregate_daily_kernel(per_stock_df, {})` returns
+        `pl.DataFrame` with the documented 16-col schema
+      - `test_cache_eviction` ✓ — per Q9 no in-process caching; 2 calls within
+        same process return equal DataFrames content but distinct Python object ids
+- [ ] Path A-1/2/3/4 24 seam tests no regression:
+      `pytest test_rs_*_seam.py` → **24/24 pass**
+- [ ] `cargo test -p tf-rs-indicators --lib` → **46/46 pass** (38 Path A-1/2/3/4
+      + 8 Path A-5)
+- [ ] 15+ existing `backend/tests/test_regime_builder.py` tests pass with **0
+      changes** to that file (Q7: public `run_regime_batch` signature unchanged —
+      `git diff backend/app/api/regime_builder.py` returns empty)
+- [ ] Full seam regression: 24 + 5 + 15 = **44 passed** across all test files
+- [ ] uvicorn `GET /api/regime-history?start=2025-01-10&end=2025-01-14` returns
+      **200 OK** with the documented `market_phase` 5-section dict via Rust kernels
+      (end-to-end smoke against real `D:/AI-Stock/Stock-Data/`)
+
+**Ticket 05 (closure) — TODO 2026-10-19 (TBD commit):**
+
+- [ ] ADR-0006 §"5 段" Path A-5 footnote in-place amendment: "multi-batch
+      daily-grain orchestration follows the same 5 段 seam contract with per-batch
+      kernel dispatch + `pl.concat` left in Python" per Spec 0005 Q16
+- [ ] CONTEXT.md §"Multi-kernel service-level seam (Path A-4+)" glossary
+      sub-bullet for Path A-5 multi-batch daily-grain pattern per Spec 0005 Q15
+- [ ] ADR-0001 fifth `Updated:` line + status bumped from
+      "spec'd ... pending implementation" → "**implementation landed**"; Changelog
+      final entry describing 16 funcs / 6 milestone tags / test counts
+- [ ] Cross-project memory entries appended for any new Path A-5 lessons:
+      - Path A-5 lazy scan_parquet glob construction on Windows (T01 + T02 finding)
+      - Path A-5 `index_pct_map` join by `str(date)` pattern (T02 finding)
+      - Path A-5 14-aggregation `group_by + agg` block (T02 finding)
+- [ ] Tag `path-a5-docs-closure` annotated with T01-T04 commit hashes + final
+      test counts + ADR-0006 Path A-5 footnote confirmation + cross-project
+      memory entry refs
+- [ ] Worktree clean (`git status --short` shows only `target/` untracked)
+- [ ] Spec 0005 status bumped from `Ready-for-agent` → **`Implemented`**;
+      "Implementing commits" subsection enumerates T01-T05 + spec-freeze
+      commits with their tags
+
