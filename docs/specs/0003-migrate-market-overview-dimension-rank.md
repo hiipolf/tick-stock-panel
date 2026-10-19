@@ -412,12 +412,22 @@ def _dimension_rank(rows, repo, kind, limit=5, level=None):
 
 **Ticket 01 (research) — done 2026-10-19:**
 
-- [ ] `docs/research/market-overview-rust-api.md` committed (cited excerpts of vendored
+- [x] `docs/research/market-overview-rust-api.md` committed (cited excerpts of vendored
       polars 0.55.2 `Vec<HashMap>` round-trip + `iter_rows` semantics; Approach A verdict:
-      pure-Rust kernel, no Polars expressions in hot path)
-- [ ] `crates/indicators/examples/research_market_overview_api.rs` committed and
+      pure-Rust kernel, no Polars expressions in hot path; **recommends amending spec
+      `dimension_rank_kernel` signature** from `Vec<(String, Vec<StockFields>)>` (with
+      `#[pyclass] StockFields`) to `Vec<(String, Vec<HashMap<String, Py<PyAny>>>)>` —
+      PyO3 0.29.3's universal extract handles both transparently; PyObject variant
+      avoids `#[pyclass]` derive boilerplate + future-proofs schema evolution)
+- [x] `crates/indicators/examples/research_market_overview_api.rs` committed and
       `cargo check --example research_market_overview_api -p tf-rs-indicators` exits 0
-- [ ] No `Cargo.toml` feature flag change required
+      (also `cargo run` exercises the 3 pure-Rust demo paths: top_rows + pct_band_rows +
+      dimension_rank, all produce expected output)
+- [x] No `Cargo.toml` feature flag change required
+- [ ] Ticket 02 adopts the T01 signature recommendation: replace `StockFields`
+      `#[pyclass]` with `HashMap<String, Py<PyAny>>` for `dimension_rank_kernel` parameter.
+      This is a Spec 0003 amendment, not a Spec 0003 violation — the adapter-side
+      Python shape (`groups: list[tuple[str, list[dict]]]`) is unchanged.
 
 **Ticket 02 (kernel) — done 2026-10-19 (commits pre-push, worktree-local):**
 
