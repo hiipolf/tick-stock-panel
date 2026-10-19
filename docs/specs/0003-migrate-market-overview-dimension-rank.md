@@ -431,16 +431,30 @@ def _dimension_rank(rows, repo, kind, limit=5, level=None):
 
 **Ticket 02 (kernel) — done 2026-10-19 (commits pre-push, worktree-local):**
 
-- [ ] `crates/indicators/src/services_market_overview/{mod,top_rows,pct_band_rows,dimension_rank}.rs`
-      committed; `cargo test -p tf-rs-indicators -- services_market_overview` passes (3/3)
-- [ ] Wheel re-built (`maturin develop --release` after stopping uvicorn) and re-installed
-      to `.venv\Lib\site-packages\tf_rs_indicators\tf_rs_indicators.pyd`; new
-      `top_rows_kernel` / `pct_band_rows_kernel` / `dimension_rank_kernel` exposed via Python
-      `import tf_rs_indicators`
-- [ ] No changes to callers in `api/overview.py` / daily pipeline
-- [ ] No new Cargo.toml features; `Cargo.lock` unchanged
-- [ ] `_leader_sort_key` 1:1 port verified (bit-identical Python `max()` ordering)
-- [ ] 8-band pct_buckets 1:1 port verified (boundary inclusive/exclusive per Python ref)
+- [x] `crates/indicators/src/services_market_overview/{mod,top_rows,pct_band_rows,dimension_rank}.rs`
+      committed; `cargo test -p tf-rs-indicators --lib services_market_overview` passes **10/10**
+      (3 top_rows + 3 pct_band_rows + 4 dimension_rank unit tests); `cargo test --workspace --lib`
+      passes **16/16** (no Path A-1/2 regression)
+- [x] Wheel re-built (`maturin develop --release` from `crates/indicators/` after stopping
+      uvicorn PID 35400); new `.pyd` at `.venv\Lib\site-packages\tf_rs_indicators\tf_rs_indicators.pyd`
+      is **19,857,408 bytes** (+144 KB over Path A-2's 19,708,928). Python
+      `import tf_rs_indicators` exposes **6 functions**: `dimension_rank_kernel`,
+      `pct_band_rows_kernel`, `top_rows_kernel` (new) + `extreme_levels`, `support_resistance`,
+      `sum_close` (Path A-1/2). Smoke-tested all 3 new kernels with synthetic fixtures:
+      4-row → top3 by change_pct desc, 5-value → 8-band counts (totals 100%), 2-group →
+      per-group reduce with leader selection.
+- [x] No changes to callers in `api/overview.py` / daily pipeline (Ticket 04's job)
+- [x] No new Cargo.toml features; `Cargo.lock` unchanged (reused workspace deps)
+- [x] `_leader_sort_key` 1:1 port verified (bit-identical Python `max()` ordering):
+      `leader_sort_key` returns `change_pct.filter(is_finite).unwrap_or(-inf)`; Rust
+      `max_by` with first-equal-wins tie-break (`Equal => ia.cmp(ib)` to prefer
+      smaller index, matching Python's stable `max()`); verified by test
+      `leader_zero_pct_wins_over_negative` (B with 0.0% beats A with -1.0% / D with -0.5%)
+      and `leader_uses_neg_inf_sentinel` (None treated as smaller than any finite)
+- [x] 8-band pct_buckets 1:1 port verified (boundary inclusive/exclusive per Python ref):
+      `low <= v < high` semantics matching Python line 356 of `_pct_band_rows`; verified
+      by test `boundary_inclusiveness` (-0.05/-0.03/-0.01/0.0/0.01/0.03/0.05 all
+      place correctly into the inclusive-low / exclusive-high bucket)
 
 **Ticket 03 (fixture) — done 2026-10-19:**
 
