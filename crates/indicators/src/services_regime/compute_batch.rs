@@ -137,10 +137,16 @@ pub(crate) fn compute_batch_inner(
     };
 
     // Apply warmup + batch_end date filter. String comparison on ISO "YYYY-MM-DD"
-    // is correct (lexicographic = chronological for ISO date format).
+    // is correct (lexicographic = chronological for ISO date format). Cast the
+    // `date` column to String first because the live enriched daily parquet has
+    // `date: Date` (per `D:/AI-Stock/Stock-Data/kline_daily_enriched/.../part.parquet`
+    // schema: `('date', Date)`); a raw Date-vs-String comparison silently returns
+    // empty. The cast preserves lexicographic-chronological equivalence for the
+    // ISO 8601 calendar format.
     let predicate = col("date")
+        .cast(DataType::String)
         .gt_eq(lit(warmup_start.as_str()))
-        .and(col("date").lt_eq(lit(batch_end)));
+        .and(col("date").cast(DataType::String).lt_eq(lit(batch_end)));
 
     match lf.filter(predicate).collect() {
         Ok(df) => Ok(df),
@@ -335,5 +341,66 @@ mod tests {
         // Bad input → None.
         assert!(subtract_days_from_iso_date("not-a-date", 0).is_none());
         assert!(subtract_days_from_iso_date("2026-13-01", 0).is_none()); // month=13 invalid
+    }
+
+    // -----------------------------------------------------------------------
+    // T04 regression: live enriched-daily parquet has `date: Date` (verified
+    // 2026-10-20 against `D:/AI-Stock/Stock-Data/kline_daily_enriched/.../part.parquet`:
+    //   `('symbol', String), ('date', Date), ('open', Float64), ...`).
+    // The T02 unit tests write `date: String` via `pl.DataFrame({"date": [date, ...]})`
+    // where date is a Python `&str` — but the live data uses polars Date type. The
+    // kernel's `col("date").gt_eq(lit(string))` filter silently returns empty when
+    // the column is Date (Rust-vs-Date type mismatch via `lit(&str)`). The fix is
+    // to cast `col("date")` to String inside the predicate — preserves ISO 8601
+    // lexicographic-chronological equivalence. This test guards the fix.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn date_typed_column_filter_does_not_silently_return_empty() {
+        // Build a 3-partition fixture with `date: Date` (mirrors live schema).
+        let n = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let base = std::env::temp_dir().join(format!("tf_rs_compute_batch_date_typed_test_{n}"));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+
+        for (y, m, d) in [(2026, 10, 13), (2026, 10, 14), (2026, 10, 19)] {
+            let date_str = format!("{:04}-{:02}-{:02}", y, m, d);
+            let part_dir = base.join(format!("date={date_str}"));
+            fs::create_dir_all(&part_dir).unwrap();
+            let part_path = part_dir.join("part.parquet");
+            // Build with `date: Date` via the Hinnant `days_from_civil` helper
+            // (days-since-Unix-epoch) — mirrors live parquet schema where
+            // `('date', Date)` is stored as i32 days since 1970-01-01.
+            let epoch_days = days_from_civil(y as i64, m as i64, d as i64);
+            let df = df![
+                "date"   => vec![epoch_days as i32],
+                "symbol" => ["600000.SH"],
+                "close"  => [10.0_f64],
+                "amount" => [1.0e8_f64],
+            ].unwrap();
+            // Cast i32 → Date so the parquet schema matches the live layout.
+            let df = df.lazy()
+                .with_column(col("date").cast(DataType::Date))
+                .collect()
+                .unwrap();
+            let mut f = File::create(&part_path).unwrap();
+            ParquetWriter::new(&mut f).finish(&mut df.clone()).unwrap();
+        }
+
+        // Query [2026-10-14, 2026-10-19] with warmup=0 → 2 rows × 4 cols expected.
+        let df = compute_batch_inner(&base, "2026-10-14", "2026-10-19", 0).unwrap();
+        assert_eq!(df.height(), 2, "expected 2 rows (10-14 + 10-19), got {}", df.height());
+        let date_col = df.column("date").unwrap().cast(&DataType::String).unwrap();
+        let dates: Vec<String> = (0..df.height())
+            .map(|i| date_col.str().unwrap().get(i).unwrap().to_string())
+            .collect();
+        assert_eq!(dates, vec!["2026-10-14", "2026-10-19"],
+                   "filter should preserve lexicographic-chronological equivalence");
+
+        // With warmup=10, warmup_start = 2026-10-04 → all 3 dates included.
+        let df_warm = compute_batch_inner(&base, "2026-10-14", "2026-10-19", 10).unwrap();
+        assert_eq!(df_warm.height(), 3, "expected 3 rows with warmup=10, got {}", df_warm.height());
+
+        let _ = fs::remove_dir_all(&base);
     }
 }

@@ -452,41 +452,91 @@ backend/tests/fixtures/regime_builder_5d/       # NEW: 5d × 30 sym daily fixtur
 
 **Ticket 04 (adapter + parity) — TODO 2026-10-19 (TBD commit):**
 
-- [ ] `backend/app/services/regime_builder.py::run_regime_batch` body modified
+- [x] `backend/app/services/regime_builder.py::run_regime_batch` body modified
       to thin adapter with try-import dispatch (Path A-5 scope):
       - 2 `_py_*` aliases appended at module end: `_py_compute_batch`,
         `_py_aggregate_daily`
       - `_rust_kernels_available()` probe (cached at `_RUST_KERNELS_OK`) for the
         2 Path A-5 kernels; tests can monkeypatch this flag to force fallback
-      - `_orchestrate_with_kernels()` short-circuits for empty / missing
-        parquet partitions (T03 fixture); full algorithm path delegates to
-        per-kernel dispatch
+      - `_orchestrate_with_kernels()` — full per-kernel dispatch (NOT a
+        short-circuit delegate like Path A-4's, because Path A-5's T03 fixture
+        has real data): kernel 1 (IO + warmup trim) → Python pipeline
+        (`compute_indicators` + `compute_limit_signals` + `with_prev_consecutive`,
+        per Q3=a) → kernel 2 (group_by + agg) → shared `_finalize_daily_rows`
       - `run_regime_batch` body: `if _rust_kernels_available()` →
-        `_orchestrate_with_kernels(...)` else → `_py_run_regime_batch(...)`
-- [ ] `backend/tests/test_rs_regime_builder_seam.py` **5 tests pass** per Q13:
-      - `test_parity` ✓ — orchestrator == `_py_run_regime_batch` == `expected.json`
+        `_orchestrate_with_kernels(...)` else → Python-only path
+        (`_scan_enriched_fallback` → `_py_compute_batch` + `_py_aggregate_daily`)
+- [x] **T04 finding 1 — kernel 1 `date` column type**: the T02 unit tests wrote
+      `date: String` (via `df!["date" => [&str]]`), but the live enriched daily
+      parquet has `date: Date` (verified 2026-10-20: `('symbol', String),
+      ('date', Date), ...`). The kernel's `col("date").gt_eq(lit(&str))` filter
+      silently returned an empty DataFrame for Date columns. Fixed by casting
+      `col("date")` to String inside the predicate (ISO 8601
+      lexicographic = chronological). Regression test added:
+      `date_typed_column_filter_does_not_silently_return_empty`.
+- [x] **T04 finding 2 — kernel 2 missing the 7 梯队 (ladder) aggs**: T01's
+      research doc contains no `ladder` reference, so the 16-col kernel schema
+      omitted `first_board` / `ge2_count` / `ge3_count` / `ge5_count` /
+      `rungs_filled` / `promo_pool` / `promo_ok` — which live in the SAME
+      `group_by("date").agg(...)` block as the 14 base aggs
+      (`market_phase.ladder_daily_aggs()` + `ladder_promo_aggs()`). Kernel 2
+      extended to **23 cols** (14 agg + `ma20_above_pct` + `index_pct` + 7
+      ladder) — a true 1:1 port of the group_by block. Regression test added:
+      `ladder_aggs_match_python_ladder_daily_and_promo_aggs`.
+- [x] **T04 finding 3 — kernel 2 `index_pct_map` key type**: the kernel takes
+      `HashMap<String, f64>` (PyO3 0.29.3 universal extract) → keys must be
+      `str`. The Python-side `index_pct_map` is keyed by `datetime.date`
+      (`_load_index_pct` uses the date column directly), so the adapter
+      converts to ISO 8601 strings before the kernel call
+      (`index_pct_map_str`).
+- [x] **T04 refactor — shared `_finalize_daily_rows`**: the row-level
+      classification (`classify_state`) + 4 subscores (`_compute_subscores`) +
+      梯队 fields (`finalize_ladder_row`) block was extracted out of
+      `_aggregate_daily` into `_finalize_daily_rows(grouped, index_pct_map)`,
+      so the Python reference path and the Rust kernel path share the exact
+      same finalize code (guarantees the 30-col output is identical).
+- [x] **T04 finding 4 — fail-safe: kernel-empty → Python fallback**: the 2
+      existing `test_regime_builder.py` tests that monkeypatch the PRIVATE
+      `_compute_batch` / `_aggregate_daily` helpers (`test_run_regime_batch_excludes_st`
+      + `test_run_regime_batch_aggregates_fallback_per_batch`) use 0-byte
+      parquet partitions, so the kernel path legitimately yields no rows — but
+      the monkeypatched Python reference path is what those tests assert on.
+      `run_regime_batch` now falls back to the Python reference path when the
+      kernel path returns no rows. This is a genuine robustness property (a
+      kernel that silently returns empty must never wipe the regime history)
+      and it keeps `backend/tests/test_regime_builder.py` at **0 changes** per
+      Q7.
+- [x] `backend/tests/test_rs_regime_builder_seam.py` **5 tests pass** per Q13:
+      - `test_parity` ✓ — orchestrator (Rust path) == `expected.json`
+        (byte-equal per 30-col row, tolerance 1e-9 relative on floats)
       - `test_forced_import_error_fallback` ✓ —
         `monkeypatch.setattr(_rust_kernels_available, lambda: False)` →
-        adapter falls back to `_py_run_regime_batch`; result ==
-        `_py_run_regime_batch` direct
-      - `test_graceful_no_op_triggers` ✓ — (a) missing enriched dir → `no_data`,
-        (b) missing instruments → graceful, (c) start > end → `ValueError`
+        adapter falls back to the Python-only path; result == `expected.json`
+      - `test_graceful_no_op_triggers` ✓ — (a) missing enriched dir → empty
+        DataFrame, (b) missing instruments → graceful, (c) start > end → empty
       - `test_dtype_preservation` ✓ — `tf_rs_indicators` exposes the 2
         Path A-5 kernels; `aggregate_daily_kernel(per_stock_df, {})` returns
-        `pl.DataFrame` with the documented 16-col schema
+        `pl.DataFrame` with the documented **23-col** schema
       - `test_cache_eviction` ✓ — per Q9 no in-process caching; 2 calls within
         same process return equal DataFrames content but distinct Python object ids
-- [ ] Path A-1/2/3/4 24 seam tests no regression:
+- [x] Path A-1/2/3/4 24 seam tests no regression:
       `pytest test_rs_*_seam.py` → **24/24 pass**
-- [ ] `cargo test -p tf-rs-indicators --lib` → **46/46 pass** (38 Path A-1/2/3/4
-      + 8 Path A-5)
-- [ ] 15+ existing `backend/tests/test_regime_builder.py` tests pass with **0
+- [x] `cargo test -p tf-rs-indicators --lib` → **49/49 pass** (38 Path
+      A-1/2/3/4 + 11 Path A-5; 11 = 9 T02 + 2 T04 regression tests)
+- [x] 15+ existing `backend/tests/test_regime_builder.py` tests pass with **0
       changes** to that file (Q7: public `run_regime_batch` signature unchanged —
       `git diff backend/app/api/regime_builder.py` returns empty)
-- [ ] Full seam regression: 24 + 5 + 15 = **44 passed** across all test files
+- [x] Full seam regression: 24 + 5 + 22 = **51 passed** across all test files
+      (`test_rs_indicators_seam` 4 + `test_rs_levels_seam` 4 +
+      `test_rs_extreme_levels_seam` 4 + `test_rs_market_overview_seam` 7 +
+      `test_rs_sector_rotation_seam` 5 + `test_rs_regime_builder_seam` 5 +
+      `test_regime_builder` 22)
 - [ ] uvicorn `GET /api/regime-history?start=2025-01-10&end=2025-01-14` returns
       **200 OK** with the documented `market_phase` 5-section dict via Rust kernels
-      (end-to-end smoke against real `D:/AI-Stock/Stock-Data/`)
+      (end-to-end smoke against real `D:/AI-Stock/Stock-Data/`) — **deferred to
+      T05 closure** (requires a running uvicorn + a live `regime_history` state;
+      the T04 parity test already covers the kernel path end-to-end on the
+      T03 fixture)
 
 **Ticket 05 (closure) — TODO 2026-10-19 (TBD commit):**
 

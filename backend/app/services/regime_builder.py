@@ -154,9 +154,13 @@ def _aggregate_daily(df: pl.DataFrame, index_pct_map: dict | None = None) -> pl.
     index_pct_map: {date: 指数涨幅} 可选, 由调用方从指数数据预先算好。
     梯队指标(首板/N板宽度/晋级率)由 market_phase 提供; phase 列不在此算
     (需要完整日序做平滑), 由 refresh_phase_labels 在 upsert 后统一重标。
+
+    Path A-5 T04: 本函数的 `group_by("date").agg(...)` 块是 Rust kernel
+    `aggregate_daily_kernel` 的 1:1 移植目标(23 列 = 14 agg + ma20_above_pct
+    + index_pct + 7 梯队 agg); 行级分类 / 子维度分 / 梯队字段组装已抽到
+    `_finalize_daily_rows`, 由两条路径共用。
     """
     from app.services.market_phase import (
-        finalize_ladder_row,
         ladder_daily_aggs,
         ladder_promo_aggs,
         with_prev_consecutive,
@@ -241,8 +245,28 @@ def _aggregate_daily(df: pl.DataFrame, index_pct_map: dict | None = None) -> pl.
         ),
     ).sort("date")
 
+    return _finalize_daily_rows(grouped, index_pct_map)
+
+
+def _finalize_daily_rows(
+    grouped: pl.DataFrame,
+    index_pct_map: dict | None = None,
+) -> pl.DataFrame:
+    """把按日聚合结果转成最终 30 列表(规则分类 + 4 子维度分 + 梯队字段)。
+
+    Path A-5 T04: 本函数从 `_aggregate_daily` 抽出, 由两条路径共用:
+      - Python 参考路径: `_aggregate_daily` 的 `group_by("date").agg(...)` 结果
+      - Rust kernel 路径: `tf_rs_indicators.aggregate_daily_kernel(...)` 的
+        23 列聚合结果(14 agg + ma20_above_pct + index_pct + 7 梯队 agg)
+
+    `index_pct` 优先取 `grouped` 自带的 `index_pct` 列(kernel 路径已 join),
+    否则回退到 `index_pct_map` 按 `str(date)` 查(Python 参考路径)。
+    """
+    from app.services.market_phase import finalize_ladder_row
+
     # 转成 dict 列表做分类(规则引擎需逐日算, 但只扫 grouped 行数=天数, 不再回扫全表)
     index_pct_map = index_pct_map or {}
+    has_index_pct_col = "index_pct" in grouped.columns
     rows = []
     for r in grouped.iter_rows(named=True):
         up = r.get("up_count", 0) or 0
@@ -254,6 +278,9 @@ def _aggregate_daily(df: pl.DataFrame, index_pct_map: dict | None = None) -> pl.
         valid_cnt = r.get("_valid_cnt") or 0
         above_cnt = r.get("_above_cnt") or 0
         ma20_above = (above_cnt / valid_cnt) if valid_cnt > 0 else 0.0
+        # Rust kernel 路径直接给出 `ma20_above_pct`(已算好占比)
+        if "ma20_above_pct" in r:
+            ma20_above = r.get("ma20_above_pct") or 0.0
         # 涨跌幅分布(占比, 0-100)
         up_pct = (up / total * 100) if total > 0 else 0.0
         down_pct = (down / total * 100) if total > 0 else 0.0
@@ -261,6 +288,12 @@ def _aggregate_daily(df: pl.DataFrame, index_pct_map: dict | None = None) -> pl.
         strong_down_pct = ((r.get("strong_down_count", 0) or 0) / total * 100) if total > 0 else 0.0
         avg_pct = r.get("avg_pct", 0.0) or 0.0
         median_pct = r.get("median_pct", 0.0) or 0.0
+        # index_pct: kernel 路径已 join 进 `index_pct` 列; Python 路径按 date 查
+        if has_index_pct_col:
+            index_pct = r.get("index_pct")
+            index_pct = float(index_pct) if index_pct is not None else 0.0
+        else:
+            index_pct = index_pct_map.get(r["date"], 0.0)
         metrics = {
             "limit_up": limit_up,
             "limit_down": r.get("limit_down", 0) or 0,
@@ -270,7 +303,7 @@ def _aggregate_daily(df: pl.DataFrame, index_pct_map: dict | None = None) -> pl.
             "up_count": up,
             "down_count": down,
             "up_ratio": (up / down) if down > 0 else (float(up) if up > 0 else 1.0),
-            "index_pct": index_pct_map.get(r["date"], 0.0),
+            "index_pct": index_pct,
             "above_ma20_pct": ma20_above,
             "total_amount": r.get("total_amount", 0) or 0,
             "avg_turnover": r.get("avg_amount", 0) or 0,
@@ -324,6 +357,42 @@ def _aggregate_daily(df: pl.DataFrame, index_pct_map: dict | None = None) -> pl.
 # - warmup_days: 每批前缀预热天数(日历日), 必须 > ma20 的 20 交易日(≈28 日历日)。
 _REGIME_BATCH_DAYS_DEFAULT = 60
 _REGIME_WARMUP_DAYS_DEFAULT = 40
+
+
+# ───────────────────────── Path A-5 Rust kernel availability (Q5) ─────────────────────────
+# Path A-5 adds 2 service-level Rust kernels per Spec 0005:
+#   - `compute_batch_kernel(data_dir: PathBuf, batch_start, batch_end, warmup_days)`
+#     1:1 port of `_py_compute_batch` IO + warmup date-range filter.
+#   - `aggregate_daily_kernel(per_stock_df, index_pct_map)`
+#     1:1 port of `_py_aggregate_daily` group_by + agg block (23 cols = 14 agg
+#     + ma20_above_pct + index_pct + 7 ladder aggs).
+#
+# Cached: re-import only when `_RUST_KERNELS_OK = None`. Tests monkeypatch this
+# flag to force the fallback path without touching global modules. Mirrors
+# the Path A-4 `_rust_kernels_available` adapter pattern at
+# `backend/app/services/sector_rotation.py:336-366`.
+_RUST_KERNELS_OK: bool | None = None
+
+
+def _rust_kernels_available() -> bool:
+    """Return True if `tf_rs_indicators` exposes the 2 Path A-5 kernels.
+
+    Cached: re-import only when `_RUST_KERNELS_OK = None`. Tests monkeypatch
+    this flag to force the fallback path without touching global modules.
+    """
+    global _RUST_KERNELS_OK
+    if _RUST_KERNELS_OK is not None:
+        return _RUST_KERNELS_OK
+    try:
+        import tf_rs_indicators  # noqa: F401  cdylib presence probe
+        from tf_rs_indicators import (  # noqa: F401  per-kernel probe
+            compute_batch_kernel,
+            aggregate_daily_kernel,
+        )
+        _RUST_KERNELS_OK = True
+    except ImportError:
+        _RUST_KERNELS_OK = False
+    return _RUST_KERNELS_OK
 
 
 def _compute_batch(repo, enriched_dir, instruments, historical_shares,
@@ -452,6 +521,175 @@ def _load_index_pct(repo, start: date, end: date, symbol: str = "000001.SH") -> 
         return {}
 
 
+# ───────────────────────── Path A-5 thin kernel-orchestrator (Q5) ─────────────────────────
+# Per Spec 0005 §"Adapter orchestration" (7-step plan) + ADR-0006 §"5 段" Path A-4
+# amendment, `run_regime_batch` dispatches to this thin kernel-orchestrator when
+# `tf_rs_indicators` is importable. The Python pipeline (`compute_indicators` +
+# `compute_limit_signals` + `with_prev_consecutive`) stays per Q3=a — only the
+# IO + warmup date-range filter (kernel 1) and the group_by + agg block
+# (kernel 2) are kernelized.
+#
+# Mirror of `services_sector_rotation._orchestrate_with_kernels` (Path A-4 T04).
+# Multi-batch: each batch is independently kernelized; `pl.concat` stays Python
+# (Q6).
+def _orchestrate_with_kernels(
+    repo,
+    start: date,
+    end: date,
+    *,
+    index_pct_map: dict | None = None,
+    excluded_symbols: list[str] | None = None,
+) -> pl.DataFrame | None:
+    """Path A-5 thin kernel-orchestrator (kernel 1 IO + kernel 2 aggregation).
+
+    Algorithm (per Spec 0005 §"Adapter orchestration" 7-step plan):
+      1. Load `index_pct_map` for the [start, end] range (Python)
+      2. Resolve ST-excluded symbol set (Python; uses repo.store.data_dir)
+      3. Resolve `enriched_dir`, `instruments`, `historical_shares` (Python)
+      4. Collect `target_dates` from `enriched_date_set(repo)` (Python)
+      5. Single batch (small range ≤ `batch_days`):
+           a. kernel 1: `compute_batch_kernel(enriched_dir, batch_start, batch_end, warmup_days)`
+              → Polars DataFrame with enriched columns + warmup rows
+           b. trim warmup rows (Python: `df.filter(...)` per Q3=a)
+           c. Python pipeline: `compute_indicators` + `compute_limit_signals` +
+              `with_prev_consecutive` (Q3=a — heavy Polars expression chain stays Python)
+           d. Python: `_filter_excluded_symbols(df, excluded_symbols)`
+           e. kernel 2: `aggregate_daily_kernel(per_stock_df, index_pct_map)`
+              → Polars DataFrame with 23 columns × N date rows
+              (14 agg + ma20_above_pct + index_pct + 7 梯队 agg)
+           f. Python: `_finalize_daily_rows(agg, index_pct_map)` — shared with
+              the Python reference path (classification + 4 subscores + 梯队字段)
+      6. Multi-batch (large range > `batch_days`): split, kernelize per batch,
+         concat via `pl.concat(..., how="vertical_relaxed")` (Q6: `pl.concat` stays Python)
+      7. Return the (possibly empty) Polars DataFrame.
+    """
+    if start > end:
+        return pl.DataFrame()
+
+    try:
+        from app.services import preferences
+        batch_days = preferences.get_regime_batch_days()
+        warmup_days = preferences.get_regime_warmup_days()
+    except Exception:  # noqa: BLE001
+        batch_days = _REGIME_BATCH_DAYS_DEFAULT
+        warmup_days = _REGIME_WARMUP_DAYS_DEFAULT
+
+    # Per-batch + Python pipeline imports (Q3=a: heavy Polars expressions stay Python)
+    from datetime import timedelta
+    from app.indicators.pipeline import compute_indicators, compute_limit_signals
+    from app.services.market_phase import with_prev_consecutive
+    import tf_rs_indicators as _kernels
+
+    # kernel 2 的 `index_pct_map` 参数是 `HashMap<String, f64>`(PyO3 0.29.3
+    # universal extract)→ 键必须是 str。Python 侧的 `index_pct_map` 键是
+    # `datetime.date`(`_load_index_pct` 直接用 date 列做键), 所以这里统一转
+    # ISO 8601 字符串(与 kernel 内部 `str(date)` 分组键同格式)。
+    index_pct_map_str: dict[str, float] = {
+        (d.isoformat() if hasattr(d, "isoformat") else str(d)): float(v)
+        for d, v in (index_pct_map or {}).items()
+    }
+
+    try:
+        enriched_dir = repo.store.data_dir / "kline_daily_enriched"
+        if not enriched_dir.exists():
+            return None
+        excluded_symbols = excluded_symbols or []
+        instruments = repo.get_instruments()
+        historical_shares = repo.get_historical_shares()
+
+        target_dates = sorted(d for d in enriched_date_set(repo)
+                              if start <= d <= end)
+        if not target_dates:
+            return None
+
+        # ── Step 5: single batch (small range) ──
+        if len(target_dates) <= batch_days:
+            batch_start = target_dates[0]
+            batch_end = target_dates[-1]
+            # 5a: kernel 1 (IO + warmup date-range filter)
+            warmup_start = batch_start - timedelta(days=warmup_days)
+            raw = _kernels.compute_batch_kernel(
+                enriched_dir, batch_start.isoformat(), batch_end.isoformat(), warmup_days,
+            )
+            if raw.is_empty():
+                return None
+            # 5b: trim warmup rows (Python)
+            df = raw.filter(
+                (pl.col("date") >= warmup_start) & (pl.col("date") <= batch_end)
+            )
+            # 5c: Python pipeline (Q3=a)
+            df = compute_indicators(df, needed={"change_pct", "ma20"})
+            if instruments is not None and not instruments.is_empty():
+                df = compute_limit_signals(
+                    df, instruments,
+                    needed={"signal_limit_up", "signal_limit_down",
+                            "signal_broken_limit_up"},
+                    historical_shares=historical_shares,
+                )
+            df = with_prev_consecutive(df)
+            df = df.filter(
+                (pl.col("date") >= batch_start) & (pl.col("date") <= batch_end)
+            )
+            # 5d: ST-exclude (Python)
+            df = _filter_excluded_symbols(df, excluded_symbols)
+            # 5e: kernel 2 (14 agg + 7 ladder agg + index_pct join)
+            agg = _kernels.aggregate_daily_kernel(df, index_pct_map_str)
+            if agg.is_empty():
+                return None
+            # 5f: shared finalize (classification + 4 subscores + 梯队字段)
+            result = _finalize_daily_rows(agg, index_pct_map)
+            return result if not result.is_empty() else None
+
+        # ── Step 6: multi-batch (large range) ──
+        batches = [
+            (target_dates[i],
+             target_dates[min(i + batch_days - 1, len(target_dates) - 1)])
+            for i in range(0, len(target_dates), batch_days)
+        ]
+        logger.info("regime kernel-orchestrator: %d 天分 %d 批逐批聚合 (每批≤%d天 + %d天warmup)",
+                    len(target_dates), len(batches), batch_days, warmup_days)
+        daily_parts: list[pl.DataFrame] = []
+        for bs, be in batches:
+            warmup_start = bs - timedelta(days=warmup_days)
+            # kernel 1 per batch
+            raw = _kernels.compute_batch_kernel(
+                enriched_dir, bs.isoformat(), be.isoformat(), warmup_days,
+            )
+            if raw.is_empty():
+                continue
+            df = raw.filter(
+                (pl.col("date") >= warmup_start) & (pl.col("date") <= be)
+            )
+            # Python pipeline (Q3=a)
+            df = compute_indicators(df, needed={"change_pct", "ma20"})
+            if instruments is not None and not instruments.is_empty():
+                df = compute_limit_signals(
+                    df, instruments,
+                    needed={"signal_limit_up", "signal_limit_down",
+                            "signal_broken_limit_up"},
+                    historical_shares=historical_shares,
+                )
+            df = with_prev_consecutive(df)
+            df = df.filter(
+                (pl.col("date") >= bs) & (pl.col("date") <= be)
+            )
+            df = _filter_excluded_symbols(df, excluded_symbols)
+            # kernel 2 per batch + shared finalize
+            agg = _kernels.aggregate_daily_kernel(df, index_pct_map_str)
+            if agg.is_empty():
+                continue
+            daily = _finalize_daily_rows(agg, index_pct_map)
+            if not daily.is_empty():
+                daily_parts.append(daily)
+        if not daily_parts:
+            return None
+        # Q6: cross-batch `pl.concat` stays Python
+        return pl.concat(daily_parts, how="vertical_relaxed")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("regime kernel-orchestrator failed: %s", e)
+        return None
+
+
 def run_regime_batch(repo, start: date, end: date) -> pl.DataFrame:
     """批算 [start, end] 的环境时序。
 
@@ -479,8 +717,25 @@ def run_regime_batch(repo, start: date, end: date) -> pl.DataFrame:
         st_syms = load_risk_warning_symbols(repo.store.data_dir)
         excluded_symbols = sorted(st_syms)
 
-    # enriched 多日数据(优先缓存)。慢路径在每批内部完成过滤和日级聚合,
-    # 避免把所有批次的个股明细同时保留到最终 group_by。
+    # Path A-5 dispatch (Q5): kernel path bypasses the fast `get_enriched_range`
+    # cache (kernels own the scan via `compute_batch_kernel`).
+    if _rust_kernels_available():
+        result = _orchestrate_with_kernels(
+            repo, start, end,
+            index_pct_map=index_pct_map,
+            excluded_symbols=excluded_symbols,
+        )
+        if result is not None and not result.is_empty():
+            return result
+        # Fail-safe (T04): the kernel path produced no rows → fall back to the
+        # Python reference path. A kernel that silently returns empty must
+        # never wipe the regime history. Also keeps the Python reference path
+        # reachable for callers/tests that monkeypatch the private
+        # `_compute_batch` / `_aggregate_daily` helpers.
+        logger.info("regime batch: kernel path empty, falling back to Python ref [%s~%s]",
+                    start, end)
+
+    # Python-only fallback path (unchanged from pre-Path-A-5)
     df = repo.get_enriched_range(start, end)
     if df is None or df.is_empty():
         logger.info("regime batch: enriched cache miss [%s~%s], fallback to scan", start, end)
@@ -500,7 +755,7 @@ def run_regime_batch(repo, start: date, end: date) -> pl.DataFrame:
     if df.is_empty():
         return pl.DataFrame()
 
-    return _aggregate_daily(df, index_pct_map)
+    return _py_aggregate_daily(df, index_pct_map)
 
 
 # ───────────────────────── 持久化(upsert) ─────────────────────────
@@ -694,3 +949,20 @@ def earliest_enriched_date(repo) -> date | None:
     """返回 enriched 最早日期(供全量重算定起点)。无数据返回 None。"""
     dates = enriched_date_set(repo)
     return min(dates) if dates else None
+
+
+# ───────────────────────── Path A-5 _py_* aliases (Q10) ─────────────────────────
+# Per Spec 0005 §"Adapter orchestration" Q10: only 2 aliases — `_py_compute_batch`
+# (the original private IO + warmup + Python-pipeline function) and
+# `_py_aggregate_daily` (the original private group_by + agg function). The
+# other private helpers (`_scan_enriched_fallback`, `_load_index_pct`,
+# `_filter_excluded_symbols`, `_finalize_daily_rows`, `enriched_date_set`,
+# `earliest_enriched_date`) are NOT aliased — they stay as private
+# implementation details and are reused by both `_orchestrate_with_kernels`
+# (Rust path) and the Python-only fallback (re-exported via these aliases).
+#
+# Mirror of `services_sector_rotation._py_*` aliases at line 745-749 (Path A-4
+# T04). Tests monkeypatch these aliases via `monkeypatch.setattr` to force
+# the fallback path.
+_py_compute_batch = _compute_batch  # noqa: E305  alias follows private API definition
+_py_aggregate_daily = _aggregate_daily  # noqa: E305  alias follows private API definition

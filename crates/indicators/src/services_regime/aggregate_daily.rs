@@ -74,6 +74,17 @@ pub(crate) struct DailySummary {
     pub avg_amount: f64,
     pub ma20_above_pct: f64,
     pub index_pct: Option<f64>,
+    // ── 梯队指标 (ladder) — 1:1 port of `market_phase.ladder_daily_aggs()` +
+    // `market_phase.ladder_promo_aggs()` (T04 finding: these 7 aggs are part
+    // of the SAME `group_by("date").agg(...)` block as the 14 base aggs, so a
+    // true 1:1 port must include them).
+    pub first_board: u32,
+    pub ge2_count: u32,
+    pub ge3_count: u32,
+    pub ge5_count: u32,
+    pub rungs_filled: u32,
+    pub promo_pool: u32,
+    pub promo_ok: u32,
 }
 
 // ---------------------------------------------------------------------------
@@ -87,8 +98,15 @@ pub(crate) fn aggregate_daily_inner(
     per_stock_df: &DataFrame,
     index_pct_map: &HashMap<String, f64>,
 ) -> PolarsResult<DataFrame> {
+    // Original `date` dtype (e.g. `Date` for live enriched data) — the grouping
+    // key is the ISO 8601 String form, but the output column is cast back to this
+    // dtype so the kernel output matches the Python `_aggregate_daily` reference.
+    let date_dtype = per_stock_df
+        .column("date")
+        .map(|c| c.dtype().clone())
+        .unwrap_or(DataType::String);
     let summaries = compute_daily_summaries(per_stock_df, index_pct_map)?;
-    Ok(build_summary_dataframe(&summaries))
+    Ok(build_summary_dataframe(&summaries, &date_dtype))
 }
 
 /// Pure-Rust reduce: group rows by `date` (str), compute the 14 aggregations +
@@ -102,9 +120,19 @@ fn compute_daily_summaries(
         return Ok(vec![]);
     }
 
-    // Read `date` (str) + scalar columns. Use `.iter()` not `.into_iter()` per
+    // Read `date` + scalar columns. Use `.iter()` not `.into_iter()` per
     // polars 0.55 `ChunkedArray::into_iter()` removal memory entry.
-    let date_col = per_stock_df.column("date")?.str()?;
+    //
+    // The grouping key is always the ISO 8601 String form (per Spec 0005
+    // §"Implementation Decisions" kernel 2 step 4 — join by `str(date)`), so
+    // cast to String first: the live enriched data has `date: Date` (verified
+    // 2026-10-20 against `D:/AI-Stock/Stock-Data/kline_daily_enriched/.../part.parquet`
+    // schema `('date', Date)`), and a raw `Date` column would fail the `.str()`
+    // accessor. The output column dtype is restored by the caller.
+    let date_col_cast = per_stock_df
+        .column("date")?
+        .cast(&DataType::String)?;
+    let date_col = date_col_cast.str()?;
     let date_dates: Vec<String> = (0..n_rows)
         .map(|i| date_col.get(i).unwrap_or("").to_string())
         .collect();
@@ -125,6 +153,13 @@ fn compute_daily_summaries(
     let sig_bl = read_bool_col(per_stock_df, "signal_broken_limit_up")?;
     // consecutive_limit_ups (UInt32, nullable)
     let consec_col_opt = per_stock_df.column("consecutive_limit_ups").ok().and_then(|c| {
+        c.cast(&DataType::UInt32).ok().and_then(|cc| cc.u32().ok().map(|ca| ca.clone()))
+    });
+    // `_prev_consec` (optional; produced by `market_phase.with_prev_consecutive`).
+    // Required for the 晋级率 (promo) aggs; absent → promo_pool = promo_ok = 0
+    // (mirrors the Python `ladder_promo_aggs()` being conditionally omitted when
+    // `"_prev_consec" not in df.columns`).
+    let prev_col_opt = per_stock_df.column("_prev_consec").ok().and_then(|c| {
         c.cast(&DataType::UInt32).ok().and_then(|cc| cc.u32().ok().map(|ca| ca.clone()))
     });
     // close (Float64, nullable) + ma20 (Float64, nullable)
@@ -157,6 +192,14 @@ fn compute_daily_summaries(
         let mut max_consecutive: u32 = 0;
         let mut above_count: u32 = 0;
         let mut total_for_above: u32 = 0;
+        // ── 梯队指标 (ladder) accumulators ──
+        let mut first_board: u32 = 0;
+        let mut ge2_count: u32 = 0;
+        let mut ge3_count: u32 = 0;
+        let mut ge5_count: u32 = 0;
+        let mut rungs_filled_set: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+        let mut promo_pool: u32 = 0;
+        let mut promo_ok: u32 = 0;
 
         for &i in row_idxs {
             // change_pct
@@ -198,6 +241,36 @@ fn compute_daily_summaries(
             if let Some(c) = consec_col_opt.as_ref().and_then(|c| c.get(i)) {
                 if c > max_consecutive {
                     max_consecutive = c;
+                }
+                // ── 梯队指标: 1:1 port of `ladder_daily_aggs()` ──
+                //   consec.eq(1).sum()        → first_board
+                //   consec.ge(2).sum()        → ge2_count
+                //   consec.ge(3).sum()        → ge3_count
+                //   consec.ge(5).sum()        → ge5_count
+                //   consec.filter(ge(2)).n_unique() → rungs_filled
+                if c == 1 {
+                    first_board += 1;
+                }
+                if c >= 2 {
+                    ge2_count += 1;
+                    rungs_filled_set.insert(c);
+                }
+                if c >= 3 {
+                    ge3_count += 1;
+                }
+                if c >= 5 {
+                    ge5_count += 1;
+                }
+                // ── 晋级率: 1:1 port of `ladder_promo_aggs()` ──
+                //   prev.ge(1).sum()                        → promo_pool
+                //   (prev.ge(1) & consec.eq(prev + 1)).sum() → promo_ok
+                if let Some(p) = prev_col_opt.as_ref().and_then(|p| p.get(i)) {
+                    if p >= 1 {
+                        promo_pool += 1;
+                        if c == p + 1 {
+                            promo_ok += 1;
+                        }
+                    }
                 }
             }
             // ma20_above_pct: count finite pairs (close, ma20) where close > ma20.
@@ -261,6 +334,13 @@ fn compute_daily_summaries(
             avg_amount,
             ma20_above_pct,
             index_pct,
+            first_board,
+            ge2_count,
+            ge3_count,
+            ge5_count,
+            rungs_filled: rungs_filled_set.len() as u32,
+            promo_pool,
+            promo_ok,
         });
     }
 
@@ -286,7 +366,13 @@ fn read_bool_col(df: &DataFrame, col_name: &str) -> PolarsResult<Vec<bool>> {
 }
 
 /// Build the 16-column output DataFrame from the summaries vector.
-fn build_summary_dataframe(summaries: &[DailySummary]) -> DataFrame {
+///
+/// `date_dtype` is the ORIGINAL dtype of the input `date` column. The grouping
+/// key is always the ISO 8601 String form (per Spec 0005 §"Implementation
+/// Decisions" kernel 2 step 4 — join by `str(date)`), but the output column is
+/// cast back to `date_dtype` so the kernel's output dtype matches the Python
+/// `_aggregate_daily` reference exactly (live enriched data has `date: Date`).
+fn build_summary_dataframe(summaries: &[DailySummary], date_dtype: &DataType) -> DataFrame {
     let dates: Vec<&str> = summaries.iter().map(|s| s.date.as_str()).collect();
     let up_counts: Vec<u32> = summaries.iter().map(|s| s.up_count).collect();
     let down_counts: Vec<u32> = summaries.iter().map(|s| s.down_count).collect();
@@ -303,6 +389,13 @@ fn build_summary_dataframe(summaries: &[DailySummary]) -> DataFrame {
     let avg_amounts: Vec<f64> = summaries.iter().map(|s| s.avg_amount).collect();
     let ma20_above_pcts: Vec<f64> = summaries.iter().map(|s| s.ma20_above_pct).collect();
     let index_pcts: Vec<Option<f64>> = summaries.iter().map(|s| s.index_pct).collect();
+    let first_boards: Vec<u32> = summaries.iter().map(|s| s.first_board).collect();
+    let ge2_counts: Vec<u32> = summaries.iter().map(|s| s.ge2_count).collect();
+    let ge3_counts: Vec<u32> = summaries.iter().map(|s| s.ge3_count).collect();
+    let ge5_counts: Vec<u32> = summaries.iter().map(|s| s.ge5_count).collect();
+    let rungs_filleds: Vec<u32> = summaries.iter().map(|s| s.rungs_filled).collect();
+    let promo_pools: Vec<u32> = summaries.iter().map(|s| s.promo_pool).collect();
+    let promo_oks: Vec<u32> = summaries.iter().map(|s| s.promo_ok).collect();
 
     df![
         "date"              => dates,
@@ -321,8 +414,22 @@ fn build_summary_dataframe(summaries: &[DailySummary]) -> DataFrame {
         "avg_amount"        => avg_amounts,
         "ma20_above_pct"    => ma20_above_pcts,
         "index_pct"         => index_pcts,
+        // ── 梯队指标 (ladder) — same group_by block as the 14 base aggs ──
+        "first_board"       => first_boards,
+        "ge2_count"         => ge2_counts,
+        "ge3_count"         => ge3_counts,
+        "ge5_count"         => ge5_counts,
+        "rungs_filled"      => rungs_filleds,
+        "promo_pool"        => promo_pools,
+        "promo_ok"          => promo_oks,
     ]
     .expect("aggregate_daily_kernel output DataFrame construction")
+    // Cast the `date` output column back to the input dtype (e.g. Date) so the
+    // kernel output is dtype-identical to the Python `_aggregate_daily` reference.
+    .lazy()
+    .with_column(col("date").cast(date_dtype.clone()))
+    .collect()
+    .expect("aggregate_daily_kernel output date dtype cast")
 }
 
 // ---------------------------------------------------------------------------
@@ -411,7 +518,11 @@ mod tests {
 
         let df = aggregate_daily_inner(&per_stock, &index_pct_map).unwrap();
         assert_eq!(df.height(), 1, "1 day summary row");
-        assert_eq!(df.width(), 16, "16 cols: date + 14 agg + index_pct + ma20_above_pct");
+        assert_eq!(
+            df.width(),
+            23,
+            "23 cols: date + 14 agg + index_pct + ma20_above_pct + 7 ladder aggs"
+        );
 
         let up: u32 = df.column("up_count").unwrap().u32().unwrap().get(0).unwrap();
         let down: u32 = df.column("down_count").unwrap().u32().unwrap().get(0).unwrap();
@@ -548,5 +659,134 @@ mod tests {
         // Also verify total_count = 7 (all 7 stocks counted in total_count).
         let total: u32 = df.column("total_count").unwrap().u32().unwrap().get(0).unwrap();
         assert_eq!(total, 7, "all 7 stocks in total_count");
+    }
+
+    // -----------------------------------------------------------------------
+    // T04 regression: live enriched-daily parquet has `date: Date` (verified
+    // 2026-10-20 against `D:/AI-Stock/Stock-Data/kline_daily_enriched/.../part.parquet`:
+    //   `('symbol', String), ('date', Date), ...`). The T02 unit tests build
+    // `date: String` (via `df!["date" => dates]` with `&str` values), so the
+    // kernel's `.str()` accessor on a `Date` column was never exercised. The
+    // fix: cast `date` to String for the grouping key (join is by `str(date)`
+    // per Spec 0005) and cast the output column back to the input dtype so the
+    // kernel output is dtype-identical to the Python `_aggregate_daily` reference.
+    // This test guards both halves.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn date_typed_input_column_produces_date_typed_output() {
+        // Same data as `smoke_one_day_three_stocks`, but with `date: Date`.
+        let per_stock_str = make_per_stock_df(&[
+            ("2025-01-10", "600000.SH", Some(0.02),  Some(1e8), true,  false, false, 2, Some(11.0), Some(10.0)),
+            ("2025-01-10", "000001.SZ", Some(-0.01), Some(2e8), false, false, false, 0, Some(12.0), Some(12.5)),
+            ("2025-01-10", "000002.SZ", Some(0.04),  Some(3e8), true,  false, false, 1, Some(10.5), Some(9.0)),
+        ]);
+        // Cast the `date` column to Date (i32 days since 1970-01-01).
+        let epoch_2025_01_10 = 20089i32; // 2025-01-10
+        let per_stock = per_stock_str
+            .lazy()
+            .with_column(
+                lit(epoch_2025_01_10)
+                    .cast(DataType::Int32)
+                    .cast(DataType::Date)
+                    .alias("date"),
+            )
+            .collect()
+            .unwrap();
+        assert_eq!(per_stock.column("date").unwrap().dtype(), &DataType::Date);
+
+        let index_pct_map: HashMap<String, f64> = HashMap::new();
+        let df = aggregate_daily_inner(&per_stock, &index_pct_map).unwrap();
+
+        // Output `date` column dtype must be restored to `Date` (dtype parity
+        // with the Python `_aggregate_daily` reference on the same input).
+        assert_eq!(
+            df.column("date").unwrap().dtype(),
+            &DataType::Date,
+            "output date dtype must match input date dtype"
+        );
+        assert_eq!(df.height(), 1, "1 date group expected");
+        // Same aggregations as the String-typed variant.
+        let up: u32 = df.column("up_count").unwrap().u32().unwrap().get(0).unwrap();
+        let down: u32 = df.column("down_count").unwrap().u32().unwrap().get(0).unwrap();
+        let limit_up: u32 = df.column("limit_up").unwrap().u32().unwrap().get(0).unwrap();
+        assert_eq!(up, 2, "up_count should match the String-typed variant");
+        assert_eq!(down, 1, "down_count should match the String-typed variant");
+        assert_eq!(limit_up, 2, "limit_up should match the String-typed variant");
+    }
+
+    // -----------------------------------------------------------------------
+    // T04 finding: the 7 梯队 (ladder) aggs are part of the SAME
+    // `group_by("date").agg(...)` block as the 14 base aggs
+    // (`market_phase.ladder_daily_aggs()` + `ladder_promo_aggs()`), so a true
+    // 1:1 port of `_aggregate_daily`'s group_by must include them. T01's survey
+    // missed them (the research doc contains no `ladder` reference), so the
+    // kernel was extended in T04. This test pins the semantics.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn ladder_aggs_match_python_ladder_daily_and_promo_aggs() {
+        // 6 stocks on "2025-01-10" with consecutive_limit_ups:
+        //   A: consec=1  → first_board
+        //   B: consec=2  → ge2_count
+        //   C: consec=3  → ge2_count + ge3_count
+        //   D: consec=5  → ge2_count + ge3_count + ge5_count
+        //   E: consec=7  → ge2_count + ge3_count + ge5_count
+        //   F: consec=0  → none
+        // Expected:
+        //   first_board = 1 (A)
+        //   ge2_count   = 4 (B, C, D, E)
+        //   ge3_count   = 3 (C, D, E)
+        //   ge5_count   = 2 (D, E)
+        //   rungs_filled = 4 (distinct consec values >= 2 → {2, 3, 5, 7})
+        // `_prev_consec` (promo):
+        //   A: prev=0 → not in pool
+        //   B: prev=1, consec=2 = prev+1 → pool + ok
+        //   C: prev=2, consec=3 = prev+1 → pool + ok
+        //   D: prev=1, consec=5 ≠ 2   → pool only
+        //   E: prev=3, consec=7 ≠ 4   → pool only
+        //   F: prev=0 → not in pool
+        // Expected: promo_pool = 4 (B, C, D, E), promo_ok = 2 (B, C)
+        let per_stock = make_per_stock_df(&[
+            ("2025-01-10", "A", Some(0.01), Some(1e8), false, false, false, 1, Some(11.0), Some(10.0)),
+            ("2025-01-10", "B", Some(0.01), Some(1e8), false, false, false, 2, Some(11.0), Some(10.0)),
+            ("2025-01-10", "C", Some(0.01), Some(1e8), false, false, false, 3, Some(11.0), Some(10.0)),
+            ("2025-01-10", "D", Some(0.01), Some(1e8), false, false, false, 5, Some(11.0), Some(10.0)),
+            ("2025-01-10", "E", Some(0.01), Some(1e8), false, false, false, 7, Some(11.0), Some(10.0)),
+            ("2025-01-10", "F", Some(0.01), Some(1e8), false, false, false, 0, Some(11.0), Some(10.0)),
+        ]);
+        // Attach `_prev_consec` (the column `market_phase.with_prev_consecutive`
+        // produces via `pl.col("consecutive_limit_ups").shift(1).over("symbol")`).
+        // prev values: A=0, B=1, C=2, D=1, E=3, F=0
+        let prev_series = Series::new("__prev".into(), vec![0u32, 1, 2, 1, 3, 0]);
+        let per_stock = per_stock
+            .lazy()
+            .with_column(
+                lit(prev_series)
+                    .cast(DataType::UInt32)
+                    .alias("_prev_consec"),
+            )
+            .collect()
+            .unwrap();
+
+        let index_pct_map: HashMap<String, f64> = HashMap::new();
+        let df = aggregate_daily_inner(&per_stock, &index_pct_map).unwrap();
+        assert_eq!(df.height(), 1);
+
+        let first_board: u32 = df.column("first_board").unwrap().u32().unwrap().get(0).unwrap();
+        let ge2: u32 = df.column("ge2_count").unwrap().u32().unwrap().get(0).unwrap();
+        let ge3: u32 = df.column("ge3_count").unwrap().u32().unwrap().get(0).unwrap();
+        let ge5: u32 = df.column("ge5_count").unwrap().u32().unwrap().get(0).unwrap();
+        let rungs: u32 = df.column("rungs_filled").unwrap().u32().unwrap().get(0).unwrap();
+        let pool: u32 = df.column("promo_pool").unwrap().u32().unwrap().get(0).unwrap();
+        let ok: u32 = df.column("promo_ok").unwrap().u32().unwrap().get(0).unwrap();
+
+        assert_eq!(first_board, 1, "first_board = consec==1 count");
+        assert_eq!(ge2, 4, "ge2_count = consec>=2 count");
+        assert_eq!(ge3, 3, "ge3_count = consec>=3 count");
+        assert_eq!(ge5, 2, "ge5_count = consec>=5 count");
+        assert_eq!(rungs, 4, "rungs_filled = distinct consec values >= 2");
+        assert_eq!(pool, 4, "promo_pool = prev>=1 count");
+        assert_eq!(ok, 2, "promo_ok = prev>=1 AND consec==prev+1 count");
     }
 }
