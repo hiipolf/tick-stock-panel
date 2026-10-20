@@ -262,8 +262,12 @@ attributing a diff to the kernel path.
 
 - **Seam contract 可复用**。Service-level seam 5 段 (IO+cache 在 Python / multi-arg kernel
   / structured pre-aggregate) 适用于 `services/` 下其他函数 (`build_sector_rotation._compute`,
-  `regime_builder._compute_batch`, `mining_candidates._scan_*)` 等)。Path A-3 之后
+  `regime_builder._compute_batch`, `market_mainline.compute_mainline_range` 等)。Path A-3 之后
   直接套同一套模板,不用再开一轮 grill。
+  > **勘误 2026-10-20**:此处原写 `mining_candidates._scan_*` —— 该函数名在仓库里
+  > **不存在**(`backend/app/services/mining_candidates.py` 共 28 个函数,无一个 `_scan_*` 前缀;
+  > 该模块主体是候选晋级 / 发布校验 + IO,不是批量计算)。详见
+  > `docs/PATH-SURVEY.md` §6。
 - **Caller 0 改动**(Q5)。Adapter 公开签名保持,7 个 caller (api/overview + 自身)
   不动。
 - **Bit-identical parity** (Q7)。Service-level 比 indicator-level 多层结构 (dict-of-list-of-dict),
@@ -357,7 +361,16 @@ cargo test --workspace                                       # 全测
     (minute k-line partitions + concept map + ext flow + cache layer)。SPEC 4 写新 spec。
   - `services/regime_builder._compute_batch` — per-day batch compute,可直接用 indicator
     pattern (DataFrame in / DataFrame out) 但带 service-level cache 层。
-  - `services/mining_candidates._scan_*` — 多因子打分,per-symbol loop,callers 多。
+  - `services/market_mainline.compute_mainline_range` — 全市场 daily-grain 聚合
+    (涨停梯队横截面因子分),2 次 group_by + 2 次 join + `over("date")` + rank,
+    逐行 Python UDF(`map_elements`) 是真实 Python 层成本;且它与已迁完的
+    `run_regime_batch` 共用 `POST /api/regime/recompute` 一个入口 —— 同一按钮
+    一半已迁一半未迁。**Path A-6 首选目标**(依据见 `docs/PATH-SURVEY.md` §5.2)。
+    > **勘误 2026-10-20**:此处原写 `services/mining_candidates._scan_*` 并描述为
+    > "多因子打分,per-symbol loop,callers 多" —— 该函数名**不存在**;那段描述实际
+    > 吻合 `backend/app/backtest/mining.py` 一族(挖掘编排 / 束搜索 / 秩相关),
+    > 而那族是 **NumPy** 路径,迁到 `PyDataFrame` seam 需要新依赖 + 新 seam 类别,
+    > **不在 Path A 现有边界内**。详见 `docs/PATH-SURVEY.md` §6.4-§6.5。
 - **新 crate?** Spec 0003 决策是把 kernel 放 `crates/services/market_overview/` 三个子模块
   (跟 Path A-1/2 的 `crates/indicators/src/{levels,extreme_levels}.rs` 同 pattern),不用新 crate。
   如果 Path A-4 / A-5 加更多 service-level kernels,再决定是否新 crate `crates/services/`。
