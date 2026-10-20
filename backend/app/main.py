@@ -19,6 +19,7 @@ from app.api import (
     backtest,
     data,
     data_providers,
+    events,
     ext_data,
     ext_pages,
     factors,

@@ -357,38 +357,64 @@ function Read-NewLogLines($path, $prefix, $color) {
 # ===== 8. Launch + main loop =====
 # 启动与主循环同处一个 try/finally: 任一 Start-Process 失败或 Ctrl-C 都会走
 # Cleanup-All, 不留下半套进程。
-$prevCtrlC = [Console]::TreatControlCAsInput
+# 注: [Console]::* 与 Start-Process -NoNewWindow 都期望父进程有正常的 console
+# handle。从 .lnk 启动时 powershell.exe 可能持有受限 handle (非 interactive shell),
+# 这些 API 会抛 IOException "The handle is invalid"。下面全部包成宽容处理:
+# 没 handle 时静默跳过对应功能, 而不让 dev.ps1 整段退出。
+$prevCtrlC = $false
+try { $prevCtrlC = [Console]::TreatControlCAsInput } catch { $prevCtrlC = $false }
+
+# Start-Process -NoNewWindow 要求父进程有 console; .lnk 启动场景可能拿不到, 此时
+# 抛 IOException。Fallback: 普通 Start-Process (子进程开自己的 console, 用户多
+# 看一个窗口, 但不会崩)。
+function Start-ChildProcess($argHash) {
+    try {
+        return Start-Process @argHash -PassThru -NoNewWindow
+    } catch [System.IO.IOException] {
+        Log-Warn "[Console] not usable from this parent (handle is invalid); spawning child in new window instead"
+        $argHash2 = @{} + $argHash
+        $argHash2.Remove('RedirectStandardOutput') | Out-Null
+        $argHash2.Remove('RedirectStandardError') | Out-Null
+        return Start-Process @argHash2 -PassThru
+    }
+}
+
 try {
-    $backendProc = Start-Process `
-        -FilePath (Join-Path $BackendDir '.venv\Scripts\python.exe') `
-        -ArgumentList $BackendArgs `
-        -WorkingDirectory $BackendDir `
-        -RedirectStandardOutput $BackendOutLog `
-        -RedirectStandardError  $BackendErrLog `
-        -NoNewWindow -PassThru
+    $backendProc = Start-ChildProcess @{
+        FilePath                = (Join-Path $BackendDir '.venv\Scripts\python.exe')
+        ArgumentList            = $BackendArgs
+        WorkingDirectory        = $BackendDir
+        RedirectStandardOutput  = $BackendOutLog
+        RedirectStandardError   = $BackendErrLog
+    }
 
     # .cmd 不是可执行文件: 关闭 shell 执行 (重定向输出时必须) 后要走 cmd.exe /c。
     # 整条命令作为一个参数交给 cmd 解析, 避免 Start-Process 自行拼接时加错引号。
     $cmdExe = if ($env:ComSpec) { $env:ComSpec } else { 'cmd.exe' }
     $frontendCmd = '"{0}" dev --host {1} --port {2}' -f $pnpmExe, $BindAddress, $FrontendPort
-    $frontendProc = Start-Process `
-        -FilePath $cmdExe `
-        -ArgumentList @('/c', $frontendCmd) `
-        -WorkingDirectory $FrontendDir `
-        -RedirectStandardOutput $FrontendOutLog `
-        -RedirectStandardError  $FrontendErrLog `
-        -NoNewWindow -PassThru
+    $frontendProc = Start-ChildProcess @{
+        FilePath                = $cmdExe
+        ArgumentList            = @('/c', $frontendCmd)
+        WorkingDirectory        = $FrontendDir
+        RedirectStandardOutput  = $FrontendOutLog
+        RedirectStandardError   = $FrontendErrLog
+    }
 
     # Treat Ctrl-C as input so try/finally is guaranteed to run.
-    [Console]::TreatControlCAsInput = $true
+    try { [Console]::TreatControlCAsInput = $true } catch { }
 
     while ($true) {
-        if ([Console]::KeyAvailable) {
-            $key = [Console]::ReadKey($true)
-            if (($key.Modifiers -band [ConsoleModifiers]::Control) -and $key.Key -eq 'C') {
-                break
+        $ctrlC = $false
+        try {
+            if ([Console]::KeyAvailable) {
+                $key = [Console]::ReadKey($true)
+                if (($key.Modifiers -band [ConsoleModifiers]::Control) -and $key.Key -eq 'C') {
+                    $ctrlC = $true
+                }
             }
-        }
+        } catch { }  # 无 console handle 时跳过按键检测 (用户可关窗来停止)
+
+        if ($ctrlC) { break }
 
         Read-NewLogLines $BackendOutLog  '[backend ] ' Blue
         Read-NewLogLines $BackendErrLog  '[backend ] ' Blue
@@ -404,6 +430,6 @@ try {
     }
 }
 finally {
-    [Console]::TreatControlCAsInput = $prevCtrlC
+    try { [Console]::TreatControlCAsInput = $prevCtrlC } catch { }
     Cleanup-All
 }
