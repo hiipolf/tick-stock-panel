@@ -1,0 +1,290 @@
+{
+  "rows": [
+    {
+      "above_ma20_pct": 0.0,
+      "avg_pct": 0.0,
+      "avg_turnover": 1832269177.4333334,
+      "broken_limit": 0,
+      "date": "2026-10-13",
+      "down_count": 0,
+      "first_board": 0,
+      "ge2_count": 0,
+      "ge3_count": 0,
+      "ge5_count": 0,
+      "index_pct": 0.0,
+      "ladder_completeness": 0.0,
+      "limit_down": 0,
+      "limit_up": 0,
+      "max_consecutive": 0,
+      "median_pct": 0.0,
+      "profit_score": 26,
+      "promo_pool": 0,
+      "promo_rate": null,
+      "resilience_score": 100,
+      "score": 39,
+      "seal_rate": 0.5,
+      "speculation_score": 0,
+      "state": "lean_weak",
+      "strong_down_pct": 0.0,
+      "strong_up_pct": 0.0,
+      "total_amount": 54968075323.0,
+      "trend_score": 51,
+      "up_count": 0,
+      "up_ratio": 1.0
+    },
+    {
+      "above_ma20_pct": 0.0,
+      "avg_pct": -0.001,
+      "avg_turnover": 1570051992.3,
+      "broken_limit": 0,
+      "date": "2026-10-14",
+      "down_count": 16,
+      "first_board": 0,
+      "ge2_count": 0,
+      "ge3_count": 0,
+      "ge5_count": 0,
+      "index_pct": -0.0088,
+      "ladder_completeness": 0.0,
+      "limit_down": 0,
+      "limit_up": 0,
+      "max_consecutive": 0,
+      "median_pct": -0.0017,
+      "profit_score": 46,
+      "promo_pool": 0,
+      "promo_rate": null,
+      "resilience_score": 92,
+      "score": 43,
+      "seal_rate": 0.5,
+      "speculation_score": 0,
+      "state": "lean_weak",
+      "strong_down_pct": 3.3333,
+      "strong_up_pct": 3.3333,
+      "total_amount": 47101559769.0,
+      "trend_score": 42,
+      "up_count": 14,
+      "up_ratio": 0.875
+    },
+    {
+      "above_ma20_pct": 0.0,
+      "avg_pct": -0.0044,
+      "avg_turnover": 2233155610.5,
+      "broken_limit": 0,
+      "date": "2026-10-15",
+      "down_count": 17,
+      "first_board": 0,
+      "ge2_count": 0,
+      "ge3_count": 0,
+      "ge5_count": 0,
+      "index_pct": -0.0159,
+      "ladder_completeness": 0.0,
+      "limit_down": 0,
+      "limit_up": 0,
+      "max_consecutive": 0,
+      "median_pct": -0.0011,
+      "profit_score": 35,
+      "promo_pool": 0,
+      "promo_rate": null,
+      "resilience_score": 29,
+      "score": 25,
+      "seal_rate": 0.5,
+      "speculation_score": 0,
+      "state": "weak",
+      "strong_down_pct": 13.3333,
+      "strong_up_pct": 0.0,
+      "total_amount": 66994668315.0,
+      "trend_score": 35,
+      "up_count": 13,
+      "up_ratio": 0.7647
+    },
+    {
+      "above_ma20_pct": 0.0,
+      "avg_pct": 0.0091,
+      "avg_turnover": 1903472859.6333334,
+      "broken_limit": 0,
+      "date": "2026-10-16",
+      "down_count": 10,
+      "first_board": 0,
+      "ge2_count": 0,
+      "ge3_count": 0,
+      "ge5_count": 0,
+      "index_pct": 0.0024,
+      "ladder_completeness": 0.0,
+      "limit_down": 0,
+      "limit_up": 0,
+      "max_consecutive": 0,
+      "median_pct": 0.0047,
+      "profit_score": 78,
+      "promo_pool": 0,
+      "promo_rate": null,
+      "resilience_score": 100,
+      "score": 58,
+      "seal_rate": 0.5,
+      "speculation_score": 0,
+      "state": "lean_strong",
+      "strong_down_pct": 0.0,
+      "strong_up_pct": 10.0,
+      "total_amount": 57104185789.0,
+      "trend_score": 54,
+      "up_count": 19,
+      "up_ratio": 1.9
+    },
+    {
+      "above_ma20_pct": 0.0,
+      "avg_pct": 0.0004,
+      "avg_turnover": 1714606324.4,
+      "broken_limit": 0,
+      "date": "2026-10-19",
+      "down_count": 14,
+      "first_board": 0,
+      "ge2_count": 0,
+      "ge3_count": 0,
+      "ge5_count": 0,
+      "index_pct": 0.0,
+      "ladder_completeness": 0.0,
+      "limit_down": 0,
+      "limit_up": 0,
+      "max_consecutive": 0,
+      "median_pct": 0.0008,
+      "profit_score": 53,
+      "promo_pool": 0,
+      "promo_rate": null,
+      "resilience_score": 71,
+      "score": 43,
+      "seal_rate": 0.5,
+      "speculation_score": 0,
+      "state": "lean_weak",
+      "strong_down_pct": 6.6667,
+      "strong_up_pct": 3.3333,
+      "total_amount": 51438189732.0,
+      "trend_score": 51,
+      "up_count": 16,
+      "up_ratio": 1.1429
+    }
+  ],
+  "schema": [
+    {
+      "dtype": "Date",
+      "name": "date"
+    },
+    {
+      "dtype": "String",
+      "name": "state"
+    },
+    {
+      "dtype": "Int64",
+      "name": "score"
+    },
+    {
+      "dtype": "Int64",
+      "name": "limit_up"
+    },
+    {
+      "dtype": "Int64",
+      "name": "limit_down"
+    },
+    {
+      "dtype": "Int64",
+      "name": "broken_limit"
+    },
+    {
+      "dtype": "Int64",
+      "name": "max_consecutive"
+    },
+    {
+      "dtype": "Float64",
+      "name": "seal_rate"
+    },
+    {
+      "dtype": "Int64",
+      "name": "up_count"
+    },
+    {
+      "dtype": "Int64",
+      "name": "down_count"
+    },
+    {
+      "dtype": "Float64",
+      "name": "up_ratio"
+    },
+    {
+      "dtype": "Float64",
+      "name": "index_pct"
+    },
+    {
+      "dtype": "Float64",
+      "name": "above_ma20_pct"
+    },
+    {
+      "dtype": "Float64",
+      "name": "total_amount"
+    },
+    {
+      "dtype": "Float64",
+      "name": "avg_turnover"
+    },
+    {
+      "dtype": "Float64",
+      "name": "avg_pct"
+    },
+    {
+      "dtype": "Float64",
+      "name": "median_pct"
+    },
+    {
+      "dtype": "Float64",
+      "name": "strong_up_pct"
+    },
+    {
+      "dtype": "Float64",
+      "name": "strong_down_pct"
+    },
+    {
+      "dtype": "Int64",
+      "name": "profit_score"
+    },
+    {
+      "dtype": "Int64",
+      "name": "speculation_score"
+    },
+    {
+      "dtype": "Int64",
+      "name": "resilience_score"
+    },
+    {
+      "dtype": "Int64",
+      "name": "trend_score"
+    },
+    {
+      "dtype": "Int64",
+      "name": "first_board"
+    },
+    {
+      "dtype": "Int64",
+      "name": "ge2_count"
+    },
+    {
+      "dtype": "Int64",
+      "name": "ge3_count"
+    },
+    {
+      "dtype": "Int64",
+      "name": "ge5_count"
+    },
+    {
+      "dtype": "Float64",
+      "name": "ladder_completeness"
+    },
+    {
+      "dtype": "Int64",
+      "name": "promo_pool"
+    },
+    {
+      "dtype": "Null",
+      "name": "promo_rate"
+    }
+  ],
+  "shape": [
+    5,
+    30
+  ]
+}

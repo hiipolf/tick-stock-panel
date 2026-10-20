@@ -404,26 +404,48 @@ backend/tests/fixtures/regime_builder_5d/       # NEW: 5d × 30 sym daily fixtur
 - [x] No `Cargo.toml` feature flag changes; `Cargo.lock` unchanged (reused
       workspace `polars` + `pyo3` + `pyo3-polars`)
 
-**Ticket 03 (fixture) — TODO 2026-10-19 (TBD commit):**
+**Ticket 03 (fixture) — DONE 2026-10-20 (commit TBD):**
 
-- [ ] `backend/tests/fixtures/regime_builder_5d/` committed:
-      - `kline_daily_enriched_subset/<5 dates>/part.parquet` (150 rows × 15 cols,
-        ~30-50 KB; subset of `D:/AI-Stock/Stock-Data/kline_daily_enriched/<5 dates>/part.parquet`
-        filtered to 30 symbols — T03 regenerator does the subset)
-      - `instruments_ext/instruments.json` (subset of
-        `D:/AI-Stock/Stock-Data/instruments_ext/instruments.json` filtered to
-        30 symbols)
-      - `historical_shares.parquet` (subset of
-        `D:/AI-Stock/Stock-Data/historical_shares.parquet` filtered to 30 symbols)
-      - `expected.json` (~10-30 KB; captures the full `run_regime_batch`
-        orchestrator output for 1 fixed `(start, end)` config; bit-identical to
-        `_py_run_regime_batch` reference)
-- [ ] `backend/tests/fixtures/gen_regime_builder_fixture.py` regenerator
+- [x] `backend/tests/fixtures/regime_builder_5d/` committed (40.3 KB total;
+      **NO SEMANTIC CHANGE amendment** vs T01 plan — the orchestrator hardcodes
+      `repo.store.data_dir / "kline_daily_enriched"` so the fixture uses
+      `kline_daily_enriched/` (NOT `kline_daily_enriched_subset/`)):
+      - `kline_daily_enriched/date={2026-10-13,14,15,16,19}/part.parquet`
+        (5 partitions × 30 rows × 15 cols = 150 rows × 15 cols; subset of
+        `D:/AI-Stock/Stock-Data/kline_daily_enriched/<date>/part.parquet` filtered
+        to 30 symbols — T03 regenerator does the subset)
+      - `expected.json` (~2 KB; captures the full `run_regime_batch` orchestrator
+        output for 1 fixed `(start=2026-10-13, end=2026-10-19)` config; bit-identical
+        to `_py_run_regime_batch` reference; 30 cols × 5 rows)
+      - **T03 implementation divergence vs T01 plan** (NO SEMANTIC CHANGE):
+        - `instruments_ext/instruments.json` → **NOT a fixture file**; the
+          orchestrator reads instruments via `repo.get_instruments()` (a polars
+          DataFrame), not from a file. The source data has
+          `D:/AI-Stock/Stock-Data/instruments/instruments.parquet` (NOT
+          `instruments_ext/instruments.json` — `instruments_ext/` is empty
+          verified 2026-10-20). The T03 `_MockRepo.get_instruments()` returns
+          a live-subset of the 30 symbols from the real
+          `instruments/instruments.parquet` (13 cols: symbol, name, code,
+          exchange, region, type, listing_date, total_shares, float_shares,
+          tick_size, limit_up, limit_down, as_of).
+        - `historical_shares.parquet` → **NOT a fixture file**; the T03
+          `_MockRepo.get_historical_shares()` returns an empty DataFrame
+          (verified accepted by `compute_limit_signals` at
+          `pipeline.py:693` — `historical_shares: pl.DataFrame | None = None`).
+          The source data has `D:/AI-Stock/Stock-Data/financials/shares/part.parquet`
+          (NOT top-level `historical_shares.parquet` — verified missing
+          2026-10-20).
+        - `index_daily` (000001.SH) → also sourced live (the fixture
+          `_MockRepo.get_index_daily()` reads `kline_index_daily/date=*/part.parquet`
+          and computes `change_pct` from prev-day close via polars window).
+- [x] `backend/tests/fixtures/gen_regime_builder_fixture.py` regenerator
       committed (deterministic; no `np.random.*` / `random.*` / `os.urandom()` /
       `time.time()`; hard-coded 30 symbol list + immutable source tree per
-      Path A-3 + Path A-4 convention)
-- [ ] `_py_run_regime_batch(fixture_args)` output is byte-equal to `expected.json`
-- [ ] **Path A-1/2/3/4 seam tests no regression**:
+      Path A-3 + Path A-4 convention; 3-capture determinism guard per
+      Path A-4 T03 `gen_build_sector_rotation_fixture.py:128-156`)
+- [x] `_py_run_regime_batch(fixture_args)` output is byte-equal to `expected.json`
+      (3-capture SHA-256 match; file roundtrip OK)
+- [x] **Path A-1/2/3/4 seam tests no regression**:
       `pytest test_rs_*_seam.py` → **24/24 pass** (4 + 4 + 4 + 7 + 5)
 - [ ] Worktree clean post-commit (only `target/` untracked)
 - [ ] No file individually exceeds 2 MB (no LFS needed)
