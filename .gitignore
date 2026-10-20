@@ -109,3 +109,11 @@ TickFlowStockPanel.app/
 TickFlowStockPanel-macos*.dmg
 TickFlowStockPanel-macos*.zip
 reports/cursor_tickflow_pro_rate_limit_p0.bundle
+
+# ===== 嵌套 git worktree (rust-kernel 开发线) =====
+/rust-kernel/
+# ===== 离线备份 (git bundle) =====
+/_backup/
+# ===== 本地运行日志 =====
+backend/.uvicorn.out
+backend/.uvicorn.err
