@@ -1,0 +1,36 @@
+# Tick Stock Panel —— 开盘啦 (KPH) Provider 插件
+#
+# 严格按 vendor 规范 `docs/plugin-development.md` 编写
+# 目标目录: vendor 项目里复制到 `backend/app/plugins/kph/`
+#
+# 数据集: [limit_board]   (涨停池/跌停池/风向标/连板天梯/市场情绪/板块排行/涨停复盘)
+# 运行依赖: httpx (后端默认依赖)
+# API Key: 无 (kaipanhong 公开接口, 但必须节流)
+#
+# ⚠️ limit_board 是**框架新增的数据集**, 不是 vendor 原有 7 个之一。
+#    必须先应用 framework-patch/ 再启用本插件, 否则 provider_has_dataset
+#    找不到 limit_board, 路由层不认这个数据集。
+#    见 framework-patch/README.md
+#
+# 验证方法 (vendor 规范 §"测试要求" + CONTRIBUTING §9):
+#   cd backend && uv run --frozen pytest tests/test_kph_provider.py -q
+#   uv run --frozen ruff check app/plugins/kph/ tests/test_kph_provider.py
+
+name: kph                                     # 唯一标识, [a-z0-9_]
+display_name: "开盘啦 (涨停池/连板梯队/板块)"
+runtime: python
+entry: app.plugins.kph.provider:KphProvider
+check: app.plugins.kph.bridge:availability
+datasets: [limit_board, market_events]        # 仅声明真实提供的数据集; daily/adj_factor/realtime/minute/depth5/full_minute/financial 全部未声明 → 自动回退 tickflow
+api_key_env: null                             # 公开接口, 无 Key
+hidden: false
+description: "开盘啦 (kaipanhong.com) 短线情绪源. 涨停池(含涨停原因)/跌停池/风向标/连板天梯/市场情绪截面/板块排行/涨停复盘/盘面梳理事件流. 协议为 POST form-urlencoded + a/c 双参数路由 + 设备指纹, 非常规 REST."
+homepage: "https://www.kaipanhong.com"
+usage_notes:
+  - "limit_board 是框架新增数据集, 需先应用 framework-patch/ 才能路由"
+  - "market_events 是独立数据集 (盘面梳理事件流): 一条事件可涉及多只股票, 装不进 limit_board 宽联合表, 故分开声明"
+  - "无 K 线/盘口/财务, 不能替代 tickflow 的 daily/minute/depth5"
+  - "上游无公开 SLA, 客户端默认 1s 节流; 板块排行分页 st=50/页"
+  - "涨停原因 (reason) 与封单额 (seal_money) 是本插件的独有价值字段"
+  - "⚠️ 上游实时域名忽略 Date 参数 (返回最近有数据的交易日) → 客户端会校验 payload 日期, 不一致直接报错"
+  - "单位口径 (百分数→小数 / 封单量股→手 / 情绪成交额万元→元) 需用一次真实响应核对, 见 README §上线前必须核对"

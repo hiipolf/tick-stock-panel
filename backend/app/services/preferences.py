@@ -306,6 +306,54 @@ def get_financial_provider() -> str:
     return provider if provider in _allowed_data_providers() else "tickflow"
 
 
+def get_limit_board_data_provider() -> str:
+    """涨停板数据集的生效源。
+
+    TickFlow 不提供 limit_board 能力 (能力注册表 tf_provides=False), 默认值
+    "tickflow" 只表示「尚未路由」—— 实际取数需要切到声明了 limit_board 的
+    插件/自定义源 (如 KPH 开盘啦)。
+    """
+    provider = str(load().get("limit_board_data_provider", "tickflow") or "tickflow").lower()
+    return provider if provider in _allowed_data_providers() else "tickflow"
+
+
+def set_limit_board_data_provider(value: str) -> str:
+    """保存涨停板数据集的生效源, 返回规范化后的生效源名。
+
+    非法值 (未注册源名) 回退默认 "tickflow" (与其他能力 getter 的自愈口径一致),
+    不写入非法值。
+    """
+    provider = str(value or "").strip().lower()
+    if provider not in _allowed_data_providers():
+        provider = "tickflow"
+    save({"limit_board_data_provider": provider})
+    return provider
+
+
+def get_market_events_data_provider() -> str:
+    """盘面事件数据集的生效源。
+
+    TickFlow 不提供 market_events 能力 (能力注册表 tf_provides=False), 默认值
+    "tickflow" 只表示「尚未路由」—— 实际取数需要切到声明了 market_events 的
+    插件/自定义源 (如 KPH 开盘啦)。
+    """
+    provider = str(load().get("market_events_data_provider", "tickflow") or "tickflow").lower()
+    return provider if provider in _allowed_data_providers() else "tickflow"
+
+
+def set_market_events_data_provider(value: str) -> str:
+    """保存盘面事件数据集的生效源, 返回规范化后的生效源名。
+
+    非法值 (未注册源名) 回退默认 "tickflow" (与其他能力 getter 的自愈口径一致),
+    不写入非法值。
+    """
+    provider = str(value or "").strip().lower()
+    if provider not in _allowed_data_providers():
+        provider = "tickflow"
+    save({"market_events_data_provider": provider})
+    return provider
+
+
 # ===== 盘后管道拉取内容开关 (A股 / ETF / 指数 独立控制) =====
 
 def get_pipeline_pull_a_share() -> bool:

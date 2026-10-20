@@ -1,7 +1,8 @@
 """能力注册表与能力路由矩阵 — 数据集维度的单一权威定义。
 
 能力 (capability) = 一个标准化数据集 (CONTRIBUTING「数据源插件化要求」):
-daily / adj_factor / realtime / minute / depth5 / financial (注册表顺序即设置页卡片顺序)。注册表集中声明每个
+daily / adj_factor / realtime / minute / depth5 / financial / limit_board /
+market_events (注册表顺序即设置页卡片顺序)。注册表集中声明每个
 能力的展示元数据、路由偏好字段与 TickFlow 档位要求, 前端设置页不再各自硬编码。
 depth5 与其他数据集一样可由插件声明并独立路由; 五档不可用时连板梯队封单/
 看板封单通过 usable 给出缺数据提示。
@@ -86,6 +87,32 @@ CAPABILITY_REGISTRY: list[dict] = [
         # TickFlow 侧需 Expert 档; 插件/自定义源声明 full_minute 数据集即可提供
         # (插件实现 get_intraday_batch / 可选 get_intraday_latest, YAML 仅修复轮)
     },
+    {
+        "id": "limit_board",
+        "label": "涨停板",
+        "desc": "涨停池/跌停池/连板梯队/涨停原因/板块排行",
+        "field": "limit_board_data_provider",
+        "default": "tickflow",
+        "tf_tier": "none",
+        # TickFlow 侧完全没有此能力: tf_provides=False → TickFlow 不进 candidates,
+        # 只有声明 limit_board 数据集的插件/自定义源才是候选 (KPH 独占能力)。
+        # 注意 tf_tier 只表达「档位门槛」(none = 全档位, 不是「不提供」),
+        # 「TickFlow 不提供」必须用 tf_provides 表达, 否则 TickFlow 会被当成
+        # 生效源而实际没有 get_limit_board 实现。
+        "tf_provides": False,
+    },
+    {
+        "id": "market_events",
+        "label": "盘面事件",
+        "desc": "盘中异动事件流 (涨停复盘/一字板/炸板回封标签)",
+        "field": "market_events_data_provider",
+        "default": "tickflow",
+        "tf_tier": "none",
+        # 与 limit_board 同理: TickFlow 侧完全没有此能力, tf_provides=False →
+        # TickFlow 不进 candidates, 只有声明 market_events 数据集的插件/自定义源
+        # 才是候选 (KPH 独占能力)。
+        "tf_provides": False,
+    },
 ]
 
 _TICKFLOW_CANDIDATE = {
@@ -163,7 +190,12 @@ def build_capability_matrix(current: dict[str, str], tickflow_tier: str = "none"
     for cap in CAPABILITY_REGISTRY:
         # field=None → 不可路由能力 (仅 TickFlow 提供, 无路由偏好), 生效源恒为默认
         effective = current.get(cap["field"], cap["default"]) if cap["field"] else cap["default"]
-        tf_available = tier_rank >= _TIER_RANK[cap["tf_tier"]]
+        # tf_provides=False → TickFlow 侧根本没有该能力, 不进 candidates
+        # (tf_tier 只表达档位门槛, "none" = 全档位可用, 不能表达「不提供」)
+        tf_available = (
+            cap.get("tf_provides", True)
+            and tier_rank >= _TIER_RANK[cap["tf_tier"]]
+        )
         candidates: list[dict] = []
         pending: list[dict] = []
         if tf_available:

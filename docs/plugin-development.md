@@ -29,6 +29,7 @@ runtime: none                            # 运行时类型: node | python | none
 entry: app.plugins.my_source.provider:MyProvider   # provider 类的导入路径
 check: app.plugins.my_source.bridge:availability   # 可用性检测函数(可选)
 datasets: [realtime]                     # 支持: daily/adj_factor/minute/realtime/depth5/financial
+                                          # + limit_board/market_events (见下方"涨停板与盘面事件两个扩展数据集")
 api_key_env: MY_SOURCE_API_KEY           # (可选)声明后设置页提供 Key 输入框
 hidden: false                            # (可选)true = 已加载但对设置页隐藏,不注册不展示
 description: "数据源描述"
@@ -43,6 +44,26 @@ key_manage_url: "https://example.com/me" # (可选)Key/账务管理页, 显示�
 
 只声明真实提供的数据集;未声明的数据集 `provider_has_dataset` 返回 False,自动回退
 TickFlow。不要声明做不了的数据集(粒度含义见下文"能力声明的粒度")。
+
+#### 涨停板与盘面事件两个扩展数据集
+
+除上表 7 个标准数据集外,本仓还有两个由**涨停板框架改造**引入的数据集
+(能力矩阵里 `limit_board` / `market_events`,均 `tf_provides=False` —— TickFlow 侧
+不提供,只有声明它们的插件才是候选):
+
+| 数据集 | 语义 | canonical 列数 | 谁提供 |
+|---|---|---|---|
+| `limit_board` | 涨停板全市场截面(涨停池/跌停池/风向标/连板天梯/市场情绪/板块排行/涨停复盘) | 28 列宽联合, `board_type` 判别 | `kph` |
+| `market_events` | 盘面梳理事件流(一字板/人气股杀跌/尾盘炸板回封/北交所… 标签) | 9 列 | `kph` |
+
+契约与字段口径见 `backend/app/data_providers/base.py` 的 `LIMIT_BOARD_COLUMNS` /
+`MARKET_EVENTS_COLUMNS`(唯一事实源)。要点:
+
+- `limit_board` 的 `limit_count` 是**当前连板天数**,`total_board_count` 是**区间总板数**
+  ("4天3板" → 3);跨板形态的当前连板天数不可知 → `limit_count` 置 `None`,不拿总板数冒充。
+- `limit_board` / `market_events` 的比例字段一律**小数制**(`change_pct` 0.0366 = 3.66%)。
+- `market_events` 的 `event_time` 是 **unix 秒**(上游字段名叫 `TimeMin` 但值是秒,不是分)。
+
 
 #### api_key_env(界面配置 API Key)
 
@@ -318,11 +339,30 @@ uv run --extra dev python -m ruff check app/plugins/<your_plugin>/ tests/test_<y
   - `client.py` — httpx 客户端(X-api-key 认证 + 统一信封解包 + 分页 + 页间隔限频 + 单标的日K + dump 预签名下载, S3 下载不带 Key 头)
   - `provider.py` — Provider 实现(实测/文档双字段名映射、百分数→小数制、volume 股→手、上海零点戳 +8h 时区、dump 按 release 版本缓存、软失败、Key 探测)
   - `tests/test_fuyao_provider.py` — 73 个契约测试, 是新插件的测试范本
-- **`backend/app/plugins/tdxquant/`** — 通达信量化数据服务(runtime: python; `tdxaidata` 已是后端默认依赖, ctypes 包装的私有 TCP 协议, wheel 自带跨平台原生库)
-  - 提供 `realtime`(五市场全 A 股票池枚举 + 600 只/批快照, 批间失败隔离)、`depth5`(快照自带买卖五档数组, 手口径透传)、`daily`(count 模式单标的拉取, 原始价, volume 股→手, amount 万元→元, `iter_daily` 逐标的流式)、`adj_factor`(事件接口每10股口径 ÷10 转每股 + 本地K线一次配价, 交易所公式推导单事件比值, 涨跌停自检)、`minute`(1m count 模式单标的, 240 根/日, 深度约 40 交易日, datetime=Date+Time 拼北京墙钟 naive, 与日K同口径 股→手/万元→元)、`full_minute`(修复轮 `get_intraday_batch` 当日窗口 + 稳态增量 `get_intraday_latest` 每股最新 N 根; 无批量端点, 全市场一轮 10 分钟量级); 指数快照直接支持(上证指数走 TDX 999999.SH 别名, `get_realtime_indices` 映射); 快照无名称列由维表关联; 未声明 financial → 回退 TickFlow; 清单声明 `billing: points` + `key_manage_url`(商城积分明细入口)
-  - `client.py` — 原生层封装(lib 私有物化 + token 注入双 ini + `TDX_AI_DATA_LIB` 指向、空闲首连 "Invalid server response" 重试包装、股票池 12h 缓存)
-  - `provider.py` — Provider 实现(快照昨收=LastClose/高低=Max/Min 字段映射、涨跌幅 (Now-LastClose)/LastClose 小数制、RefreshTime 北京墙钟→epoch ms、软失败)
-  - `probe.py` — 候选 Key 探测的独立子进程(原生 DLL 每进程单 Key): 分阶段进度留痕定位原生层死点; 因 TDX 会话按 IP 复用(错误 Key 在活跃会话下也能拉数), 探测语义为格式+连通性而非 Key 真伪, 真伪由首次实拉暴露
+- **`backend/app/plugins/stocksdk/`** — Node 型插件, 通过 subprocess 桥接调用 stock-sdk
+  - `bridge.py` — Python↔Node 桥接 + availability 检测
+  - `bridge.mjs` — Node 端(并发池、重试、SDK 解析)
+  - `provider.py` — Provider 实现(归一化、分批、错误降级)
+- **`backend/app/plugins/kph/`** — 开盘啦(kaipanhong.com) 短线情绪源, 纯 HTTP 零依赖(runtime: none)
+  - 提供 `limit_board`(涨停池/跌停池/风向标/连板天梯/市场情绪/板块排行/涨停复盘, 28 列 canonical)
+    与 `market_events`(盘面梳理事件流, 9 列)
+  - `client.py` — POST form-urlencoded + a/c 双参数路由 + 设备指纹 + 位置数组解析 + 分页 + 非交易日回退
+  - `provider.py` — Provider 实现(28 列 canonical 映射、单位归一、日期自证、板块排行全量)
+  - `bridge.py` — availability 检测(真探上游, 用历史日期避开实时域名的日期漂移)
+  - `fetcher.py` — 盘后批量落盘 CLI(薄封装 Provider, 不依赖框架)
+  - `tests/test_kph_provider.py` / `tests/test_fetcher.py` — 契约测试
+  - ⚠️ **上游实时域名会忽略 `Date` 参数**并返回最近有数据的交易日 → client 层校验 payload
+    顶层日期, 与请求日期不一致直接抛错; 调用方请**显式传入历史日期**。
+- **`backend/app/plugins/cls/`** — 财联社(cls.cn) 持牌财经通讯社, 纯 HTTP 零依赖(runtime: none)
+  - 提供 `minute`(个股当日分时, 北京墙钟 naive); `daily` **故意不声明**(CLS 返回前复权价,
+    与项目"日K用不复权原始价"契约冲突), 未声明的自动回退 TickFlow
+  - `client.py` — 两套签名体系(web 端硬编码 sign / 移动端动态 md5(sha1(...)))+ 信封按域名分
+  - `provider.py` — Provider 实现(股→手、小数制不再 /100、缺字段置 None、分钟北京墙钟)
+  - `bridge.py` — availability 检测
+  - `tests/test_cls_provider.py` — 契约测试
+  - 另有 10 个 CLS 独有短线接口(情绪截面/涨停池/电报/板块热度/龙虎榜…) 作为 Provider 的
+    **独立公开方法**暴露, 不声明为数据集(声明了路由层会去找不存在的 schema)
+
 
 ## 路由机制(无需关心, 仅参考)
 

@@ -21,6 +21,8 @@ DEFAULT_CURRENT = {
     "depth5_data_provider": "tickflow",
     "realtime_data_provider": "tickflow",
     "financial_data_provider": "tickflow",
+    "limit_board_data_provider": "tickflow",
+    "market_events_data_provider": "tickflow",
 }
 
 
@@ -41,6 +43,7 @@ def test_registry_covers_all_routing_fields():
     assert len(set(routable)) == len(routable)
     assert {c["id"] for c in CAPABILITY_REGISTRY} == {
         "realtime", "daily", "minute", "full_minute", "depth5", "adj_factor", "financial",
+        "limit_board", "market_events",
     }
     full_minute = next(c for c in CAPABILITY_REGISTRY if c["id"] == "full_minute")
     assert full_minute["field"] == "full_minute_data_provider"
@@ -51,13 +54,82 @@ def test_registry_covers_all_routing_fields():
         assert "follow" not in cap
 
 
+def test_limit_board_is_exclusive_to_declared_sources(monkeypatch):
+    """涨停板: TickFlow 侧没有该能力 → 不进 candidates, 只有声明该数据集的源可路由。
+
+    tf_tier 只表达档位门槛 (none = 全档位), 表达不了「TickFlow 完全不提供」;
+    这条能力用 tf_provides=False 表达 (见 CAPABILITY_REGISTRY)。
+    """
+    _fake_sources(
+        monkeypatch,
+        [{"name": "kph", "display_name": "KPH", "datasets": ["limit_board"],
+          "available": True, "status": "ok"}],
+    )
+    # 任意档位 (含 expert) 下 TickFlow 都不进候选
+    for tier in ("none", "free", "starter", "pro", "expert"):
+        cap = _by_id(
+            build_capability_matrix(dict(DEFAULT_CURRENT), tickflow_tier=tier),
+        )["limit_board"]
+        assert cap["tf_available"] is False
+        assert [c["name"] for c in cap["candidates"]] == ["kph"]
+    # 默认路由 tickflow → 不可用 (TickFlow 没有该能力)
+    cap = _by_id(
+        build_capability_matrix(dict(DEFAULT_CURRENT), tickflow_tier="expert"),
+    )["limit_board"]
+    assert cap["effective"] == "tickflow"
+    assert cap["usable"] is False
+    # 显式路由到声明该数据集的源 → 可用
+    routed = dict(DEFAULT_CURRENT, limit_board_data_provider="kph")
+    cap = _by_id(build_capability_matrix(routed, tickflow_tier="none"))["limit_board"]
+    assert cap["effective"] == "kph"
+    assert cap["usable"] is True
+
+
+def test_market_events_is_exclusive_to_declared_sources(monkeypatch):
+    """盘面事件: 与涨停板同构 —— TickFlow 侧没有该能力 → 不进 candidates,
+    只有声明 market_events 数据集的源可路由 (tf_provides=False)。"""
+    _fake_sources(
+        monkeypatch,
+        [{"name": "kph", "display_name": "KPH", "datasets": ["market_events"],
+          "available": True, "status": "ok"}],
+    )
+    # 任意档位 (含 expert) 下 TickFlow 都不进候选
+    for tier in ("none", "free", "starter", "pro", "expert"):
+        cap = _by_id(
+            build_capability_matrix(dict(DEFAULT_CURRENT), tickflow_tier=tier),
+        )["market_events"]
+        assert cap["tf_available"] is False
+        assert [c["name"] for c in cap["candidates"]] == ["kph"]
+    # 默认路由 tickflow → 不可用 (TickFlow 没有该能力)
+    cap = _by_id(
+        build_capability_matrix(dict(DEFAULT_CURRENT), tickflow_tier="expert"),
+    )["market_events"]
+    assert cap["effective"] == "tickflow"
+    assert cap["usable"] is False
+    # 显式路由到声明该数据集的源 → 可用
+    routed = dict(DEFAULT_CURRENT, market_events_data_provider="kph")
+    cap = _by_id(build_capability_matrix(routed, tickflow_tier="none"))["market_events"]
+    assert cap["effective"] == "kph"
+    assert cap["usable"] is True
+
+
 def test_matrix_without_third_party_sources(monkeypatch):
-    """无插件无自定义源: 每个能力只剩 TickFlow 候选, 默认路由全部生效。"""
+    """无插件无自定义源: 每个能力只剩 TickFlow 候选, 默认路由全部生效。
+
+    limit_board / market_events 例外: TickFlow 侧没有这两个能力
+    (tf_provides=False), 任何档位下都不进候选, 未路由到声明该数据集的源之前
+    一律不可用。
+    """
     _fake_sources(monkeypatch, [])
     matrix = build_capability_matrix(dict(DEFAULT_CURRENT), tickflow_tier="expert")
     assert matrix["tickflow_tier"] == "expert"
-    assert len(matrix["capabilities"]) == 7
+    assert len(matrix["capabilities"]) == 9
     for cap in matrix["capabilities"]:
+        if cap["id"] in ("limit_board", "market_events"):
+            assert cap["tf_available"] is False
+            assert cap["candidates"] == []
+            assert cap["usable"] is False
+            continue
         names = [c["name"] for c in cap["candidates"]]
         assert names == ["tickflow"]
         assert cap["candidates"][0]["kind"] == "builtin"
@@ -289,6 +361,8 @@ def test_api_endpoint_injects_all_routing_preferences(monkeypatch):
         "depth5_data_provider": "d5-src",
         "adj_factor_provider": "adj-src",
         "financial_data_provider": "fin-src",
+        "limit_board_data_provider": "lb-src",
+        "market_events_data_provider": "me-src",
     }
     getter_names = {
         "realtime_data_provider": "get_realtime_data_provider",
@@ -298,6 +372,8 @@ def test_api_endpoint_injects_all_routing_preferences(monkeypatch):
         "depth5_data_provider": "get_depth5_data_provider",
         "adj_factor_provider": "get_adj_factor_provider",
         "financial_data_provider": "get_financial_provider",
+        "limit_board_data_provider": "get_limit_board_data_provider",
+        "market_events_data_provider": "get_market_events_data_provider",
     }
     for field, getter in getter_names.items():
         monkeypatch.setattr(preferences, getter, lambda f=field: getter_values[f])
@@ -336,6 +412,7 @@ def test_api_endpoint_full_minute_usable_follows_preference(monkeypatch):
         "get_realtime_data_provider", "get_daily_data_provider",
         "get_minute_data_provider", "get_depth5_data_provider",
         "get_adj_factor_provider", "get_financial_provider",
+        "get_limit_board_data_provider", "get_market_events_data_provider",
     ):
         monkeypatch.setattr(preferences, name, lambda: "tickflow")
     monkeypatch.setattr(preferences, "get_full_minute_data_provider", lambda: "eltdx")

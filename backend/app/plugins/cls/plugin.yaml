@@ -1,0 +1,48 @@
+# Tick Stock Panel —— 财联社 (CLS) Provider 插件
+#
+# 严格按 vendor 规范 `docs/plugin-development.md` 编写
+# 目标目录: vendor 项目里复制到 `backend/app/plugins/cls/`
+#
+# 数据集: [minute]
+#   minute ← x-quote.cls.cn/quote/stock/tline       (个股当日分时, 北京墙钟)
+#
+# ⚠️ **daily 故意不声明**: CLS 的 kline 价格字段是**减法式前复权价**
+#    (真实价 - 上市至今累计每股分红), 不是 vendor 契约要求的"不复权原始价"。
+#    2016 年前后累计分红已超过股价本身, 复权后 close_px 甚至是负数。
+#    若声明 daily, 框架的 adj_factor 管道会再叠一次前复权 → **双重复权**,
+#    产出静默错误的价格。get_daily() 方法仍保留供显式调用 (会打前复权告警)。
+# 运行依赖: httpx (后端默认依赖)
+# API Key: 无 (cls.cn 公开页面 API, 但需节流)
+#
+# ⚠️ 另 10 个 CLS 接口 (市场情绪 / 风向标 / 主线 / 板块热度 / 板块轮动 /
+#    行业板块 / 涨停池 / 题材成分股 / 人气股 / 电报) 是 **CLS 独有的短线数据**,
+#    不符合 vendor 任何标准数据集 → **不在 datasets 里声明** (声明了路由层会
+#    去找不存在的 schema)。它们作为 Provider 的独立公开方法暴露:
+#      get_market_emotion() / get_limit_up_pool() / get_telegraph() /
+#      get_sector_heat() / get_sector_industry() / get_sector_rotation() /
+#      get_market_wind() / get_market_mainline() /
+#      get_plate_stocks() / get_popular_stocks()
+#    由上层 API / 前端直接调用。
+#
+# 验证方法 (vendor 规范 §"测试要求" + CONTRIBUTING §9):
+#   cd backend && uv run --frozen pytest tests/test_cls_provider.py -q
+#   uv run --frozen ruff check app/plugins/cls/ tests/test_cls_provider.py
+
+name: cls                                    # 唯一标识, [a-z0-9_]
+display_name: "财联社 (cls.cn)"
+runtime: python
+entry: app.plugins.cls.provider:ClsProvider
+check: app.plugins.cls.bridge:availability
+datasets: [minute]                         # 仅声明真实提供的数据集; daily 故意不声明 (价格是前复权, 会与 adj_factor 双重复权), 其余未声明的自动回退 tickflow
+api_key_env: null                            # 财联社公开页面无 API Key
+hidden: false
+description: "财联社 24h 持牌财经通讯社. 当日分时 + 市场情绪/连板梯队/涨停原因/板块热度/电报等短线数据. 双签名体系 (web 端硬编码 sign + 移动端动态 sign). 日 K 可用但为前复权口径, 故不作为标准数据集声明."
+homepage: "https://www.cls.cn"
+usage_notes:
+  - "分时: 仅当日分时 (上游只返回最近一个交易日 241 根), 历史分时上游不提供"
+  - "⚠️ 日 K 不作为标准数据集: CLS 价格字段是减法式前复权价 (真实价 - 累计每股分红), 深历史绝对价位不可用 (2016 年前后甚至为负); 声明 daily 会与框架 adj_factor 双重复权 → 静默错价格. 需要 K 线请用 tickflow / ELTDX"
+  - "CLS 行情不覆盖北交所 (bj 代码实测返回 0 条), 但 symbol 归一仍按项目口径 {43,83,87,92} → .BJ"
+  - "体积: CLS 返回的 business_amount 是**股**, 需 /100 转手; change 已是小数制 (0.021 = 2.1%), 不要再 /100"
+  - "⚠️ 上游脏数据: kline 深历史对 sh600519 等个股返回负价格 (2016-06 及更早全负), provider 会丢弃并打 WARNING; 深历史回填前请核对, 见 README §8"
+  - "涨停池只有实时版 (传任何日期参数都返回当天), 历史涨停池用 KPH 插件"
+  - "财务 / 复权 / 资金流 / 五档盘口: CLS 无对应标准字段, 走 tickflow + 扩展数据"

@@ -7,7 +7,10 @@ from typing import Any, Literal
 
 import yaml
 
-DatasetName = Literal["daily", "adj_factor", "realtime", "minute", "depth5", "full_minute", "financial"]
+DatasetName = Literal[
+    "daily", "adj_factor", "realtime", "minute", "financial", "limit_board",
+    "market_events",
+]
 DEFAULT_TIMEOUT = 30.0
 MAX_TIMEOUT = 300.0
 
@@ -37,8 +40,9 @@ class DatasetConfig:
     end_param: str = "end_time"
     asset_type_param: str | None = None
     freq_param: str | None = None
-    # realtime 比例字段(change_pct/amplitude/turnover_rate)的单位声明:
+    # 比例字段 (change_pct/amplitude/turnover_rate) 的单位声明:
     # "percent"(返回 3.66 表示 3.66%)或 "decimal"(返回 0.0366 表示 3.66%)。
+    # realtime 与 limit_board 两个数据集都认这个声明 (契约一律小数制)。
     pct_unit: str | None = None
 
 
@@ -106,7 +110,10 @@ def config_from_dict(raw: dict[str, Any], path: Path | None = None) -> CustomSou
     datasets = {
         name: _dataset_from_dict(cfg)
         for name, cfg in (raw.get("datasets") or {}).items()
-        if name in {"daily", "adj_factor", "realtime", "minute", "depth5", "full_minute", "financial"} and isinstance(cfg, dict)
+        if name in {
+            "daily", "adj_factor", "realtime", "minute", "financial", "limit_board",
+            "market_events",
+        } and isinstance(cfg, dict)
     }
     default_name = path.stem if path else "preview"
     name = str(raw.get("name", default_name) or default_name).lower()

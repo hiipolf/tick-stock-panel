@@ -18,7 +18,7 @@ from app.api import (
     analysis,
     backtest,
     data,
-    events,
+    data_providers,
     ext_data,
     ext_pages,
     factors,
@@ -636,6 +636,8 @@ app.include_router(alerts.router)
 app.include_router(events.router)
 app.include_router(rps.router)
 app.include_router(sector_rotation.router)
+# 涨停板等新增标准数据集的查询/同步 (前缀 /api/data-providers)
+app.include_router(data_providers.router)
 
 # 二次开发路由与小粒度策略在所有核心路由后注册, 禁止覆盖核心路径。
 extension_registry, extension_load_errors = configure_backend_extensions(app)

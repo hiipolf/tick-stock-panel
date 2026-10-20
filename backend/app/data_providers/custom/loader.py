@@ -34,6 +34,10 @@ _PLUGIN_STATUS: dict[str, dict] = {}
 
 _NAME_RE = re.compile(r"^[a-z0-9_]+$")
 
+# 认 pct_unit 单位声明的数据集 (契约一律小数制, 声明 percent 时由 provider /100)。
+# realtime: change_pct/amplitude/turnover_rate; limit_board: change_pct/turnover_rate/amplitude。
+_PCT_UNIT_DATASETS = {"realtime", "limit_board"}
+
 
 def plugins_dir() -> Path:
     """内置可选插件目录 (app/plugins/, 与现有包结构一致, 开发态/容器态路径统一)。"""
@@ -368,7 +372,7 @@ def _config_to_dict(config: CustomSourceConfig) -> dict:
             } if ds_name != "realtime" else {}),
             **({"asset_type_param": ds.asset_type_param} if ds_name == "minute" and ds.asset_type_param else {}),
             **({"freq_param": ds.freq_param} if ds_name == "minute" and ds.freq_param else {}),
-            **({"pct_unit": ds.pct_unit} if ds_name == "realtime" and ds.pct_unit else {}),
+            **({"pct_unit": ds.pct_unit} if ds_name in _PCT_UNIT_DATASETS and ds.pct_unit else {}),
         }
     return out
 
@@ -424,7 +428,10 @@ def _sanitize_for_yaml(config: dict) -> dict:
 
     datasets_out: dict = {}
     for ds_name, ds_cfg in (config.get("datasets") or {}).items():
-        if ds_name not in {"daily", "adj_factor", "realtime", "minute", "depth5", "full_minute", "financial"}:
+        if ds_name not in {
+            "daily", "adj_factor", "realtime", "minute", "full_minute", "financial",
+            "limit_board", "market_events",
+        }:
             continue
         if not isinstance(ds_cfg, dict):
             continue
@@ -494,8 +501,8 @@ def _sanitize_dataset(ds_name: str, ds_cfg: dict) -> dict:
             out["end_param"] = end_param
     pct_unit = str(ds_cfg.get("pct_unit") or "").strip().lower()
     if pct_unit:
-        if ds_name != "realtime":
-            raise ValueError(f"{ds_name}: pct_unit 仅用于 realtime 数据集")
+        if ds_name not in _PCT_UNIT_DATASETS:
+            raise ValueError(f"{ds_name}: pct_unit 仅用于 realtime / limit_board 数据集")
         if pct_unit not in ("percent", "decimal"):
             raise ValueError(f"{ds_name}: pct_unit 必须是 percent 或 decimal")
         out["pct_unit"] = pct_unit
