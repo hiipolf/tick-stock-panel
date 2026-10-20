@@ -585,7 +585,52 @@ backend/tests/fixtures/regime_builder_5d/       # NEW: 5d × 30 sym daily fixtur
 - [x] Spec 0005 status bumped from `Ready-for-agent` → **`Implemented`**;
       "Implementing commits" subsection enumerates T01-T05 + spec-freeze
       commits with their tags
-- [x] **Real-data end-to-end smoke** (replaces the deferred uvicorn HTTP smoke):
+- [x] **T04 finding 5 — fast-route vs slow-route asymmetry** (found after the
+      closure commit, 2026-10-20, while writing the live-API contract test):
+      `run_regime_batch()` has two routes that can disagree.
+      * FAST route — `repo.get_enriched_range()` hits the in-memory enriched
+        history cache. When that cache was built by the full computation it
+        carries the limit signals and the route is correct; when the enriched
+        refresh **falls back to the raw 14-column parquet** it does NOT, and
+        the route silently yields `limit_up=0`, `first_board=0`,
+        `ge2_count=0`, `promo_rate=None` → the frontend's ladder cards would
+        render 0 / "—".
+      * SLOW route — `_scan_enriched_fallback()` → `_py_compute_batch()` →
+        `compute_indicators` + `compute_limit_signals` → `_py_aggregate_daily`.
+        Always correct.
+      The **Rust kernel path always mirrors the SLOW route** (kernel 1 rescans
+      the parquet; the Python pipeline always runs `compute_limit_signals`), so
+      the kernel path is unconditionally correct. Pinned by
+      `backend/tests/test_rs_regime_live_api_contract.py::test_kernel_route_is_never_degraded`.
+      Related: `above_ma20_pct` is slightly sensitive to where the batch
+      boundaries fall (the warmup prefix shifts the ma20 rolling window at a
+      batch's first days) — any cross-implementation comparison must reproduce
+      the **same batch partition**.
+- [x] **Live-API frontend field contract** (added after the closure commit):
+      `backend/tests/test_rs_regime_live_api_contract.py` — 14 tests against a
+      running backend (default `http://127.0.0.1:3018`), all SKIP when no
+      server is reachable (so CI / offline runs stay green). Guards:
+      * every field declared in the frontend's `RegimeRow`
+        (`frontend/src/lib/api.ts:542-576`) is present in the payload
+      * the 15 non-optional fields are never null
+      * the 7 ladder fields are populated + non-negative on every limit-up day
+      * the ladder buckets are nested: `ge5_count <= ge3_count <= ge2_count`
+        (NOTE: `first_board + ge2_count` is NOT bounded by `limit_up` — the
+        ladder buckets are keyed on the *streak length*, which includes stocks
+        that did not limit up today, so the two are different populations;
+        measured over the live 1695-row file: 1568 days equal, 125 days
+        `first+ge2 < limit_up`, 2 days `first+ge2 > limit_up`)
+      * `state ∈ RegimeState`, `score ∈ [0,100]`, rates `∈ [0,1]`
+      * rows sorted ascending; `/api/regime/latest` == history tail
+      * the live HTTP payload == the pure-Python reference (slow route) cell
+        by cell, over the same range AND the same batch partition
+      * 2025-10-17 is no longer an empty aggregation (warmup regression guard)
+      * the live (kernel) route always carries the limit signals
+      Result: **14/14 pass**; 65 passed across all seam + regime + contract
+      test files; cargo 50/50.
+
+- [x] **Real-data end-to-end smoke** (read-only, replaces the deferred uvicorn
+      HTTP smoke as the *first* real-data check):
       `run_regime_batch` run against the **real** repository
       (`KlineRepository(DataStore('D:/AI-Stock/Stock-Data'))`) over
       **2025-01-01 .. 2025-12-31** → **243 trading days → 5 batches**

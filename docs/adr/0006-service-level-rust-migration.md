@@ -187,6 +187,27 @@ attributing a diff to the kernel path.
   `FromPyObject` for `HashMap` requires `str` keys, so a Python-side map keyed
   by `datetime.date` must be converted to ISO 8601 strings at the adapter
   boundary.
+- **Fast-route vs slow-route asymmetry (found 2026-10-20, post-closure)**:
+  `run_regime_batch()` has TWO routes and they can disagree.
+  - FAST route — `repo.get_enriched_range()` hits the in-memory enriched
+    history cache and `_py_aggregate_daily` runs on it. When that cache was
+    built by the full computation it carries the limit signals (route is
+    correct); when the enriched refresh **falls back to the raw 14-column
+    parquet** it does NOT, and the route silently yields `limit_up=0`,
+    `first_board=0`, `ge2_count=0`, `promo_rate=None` — the frontend's ladder
+    cards would render 0 / "—".
+  - SLOW route — `_scan_enriched_fallback()` → `_py_compute_batch()` →
+    `compute_indicators` + `compute_limit_signals` → `_py_aggregate_daily`.
+    Always correct.
+  The **Rust kernel path always mirrors the SLOW route** (kernel 1 rescans the
+  parquet and the Python pipeline always runs `compute_limit_signals`), so the
+  kernel path is unconditionally correct. Pinned by
+  `backend/tests/test_rs_regime_live_api_contract.py::test_kernel_route_is_never_degraded`.
+  A related subtlety: `above_ma20_pct` is slightly sensitive to where the
+  batch boundaries fall (the warmup prefix shifts the ma20 rolling window at a
+  batch's first days), so any cross-implementation comparison must reproduce
+  the **same batch partition** — the live contract test therefore computes its
+  reference over the same full range as the live file.
 
 ---
 
