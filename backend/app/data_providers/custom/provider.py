@@ -13,7 +13,13 @@ import httpx
 import polars as pl
 
 from app.config import settings
-from app.data_providers.base import AssetType
+from app.data_providers.base import (
+    LIMIT_BOARD_ALL_TYPES,
+    LIMIT_BOARD_SCHEMA,
+    AssetType,
+    cast_limit_board,
+    cast_market_events,
+)
 from app.data_providers.custom.config import CustomSourceConfig, DatasetConfig
 from app.data_providers.custom.mapper import (
     apply_transforms,
@@ -45,6 +51,9 @@ _REQUIRED = {
 _PCT_FRACTION_MAX = 0.31
 
 _PCT_COLUMNS = ("change_pct", "amplitude", "turnover_rate")
+
+# 认 pct_unit 单位声明的数据集 (契约一律小数制, 声明 percent 时 /100)。
+_PCT_UNIT_DATASETS = {"realtime", "limit_board"}
 
 
 def _normalize_pct_units(
@@ -114,8 +123,8 @@ class GenericHTTPProvider:
                 if missing:
                     errors.append(f"{dataset}: missing mapped fields: {', '.join(missing)}")
             if cfg.pct_unit is not None:
-                if dataset != "realtime":
-                    errors.append(f"{dataset}: pct_unit 仅用于 realtime 数据集")
+                if dataset not in _PCT_UNIT_DATASETS:
+                    errors.append(f"{dataset}: pct_unit 仅用于 realtime / limit_board 数据集")
                 elif cfg.pct_unit not in ("percent", "decimal"):
                     errors.append(f"{dataset}: pct_unit 必须是 percent 或 decimal")
             if dataset != "realtime":
@@ -353,6 +362,101 @@ class GenericHTTPProvider:
             return pl.DataFrame()
         return pl.concat(frames, how="diagonal_relaxed")
 
+    def get_limit_board(
+        self,
+        trade_date: str | None = None,
+        board_type: str = "up",
+        on_chunk_done: Callable[[int, int], None] | None = None,
+    ) -> pl.DataFrame:
+        """拉取涨停板数据 (涨停池/跌停池/连板梯队/涨停原因/板块排行/市场情绪)。
+
+        board_type 取值 up/down/wind_vane/ladder/emotion/sector/resumption/all;
+        "all" = 合并 up+down+wind_vane+ladder+emotion+sector (不含 resumption),
+        逐块拉取后按 board_type 列合并。
+
+        YAML 源可用 datasets.limit_board.params 固定 board_type (上游只提供单块板);
+        本方法的入参优先 (调用方明确要哪块板), 请求参数与注入的 board_type 列一致。
+        """
+        cfg = self._dataset("limit_board")
+        wanted = str(board_type or "up").strip().lower()
+        if wanted == "all":
+            frames: list[pl.DataFrame] = []
+            types = LIMIT_BOARD_ALL_TYPES
+            for i, bt in enumerate(types):
+                df = self._fetch_limit_board(cfg, bt, trade_date)
+                if not df.is_empty():
+                    frames.append(df)
+                if on_chunk_done:
+                    on_chunk_done(i + 1, len(types))
+            if not frames:
+                return pl.DataFrame(schema=LIMIT_BOARD_SCHEMA)
+            return pl.concat(frames, how="diagonal_relaxed")
+        df = self._fetch_limit_board(cfg, wanted, trade_date)
+        if on_chunk_done:
+            on_chunk_done(1, 1)
+        return df
+
+    def _fetch_limit_board(
+        self,
+        cfg: DatasetConfig,
+        board_type: str,
+        trade_date: str | None,
+    ) -> pl.DataFrame:
+        """按单块板拉取并规范成 canonical 形状。"""
+        extra_params = {**cfg.params, "board_type": board_type}
+        extra_body = {**cfg.body, "board_type": board_type}
+        if trade_date:
+            extra_params["trade_date"] = trade_date
+            extra_body["trade_date"] = trade_date
+        rows = self._request_rows(
+            cfg,
+            override_params=extra_params,
+            override_body=extra_body,
+        )
+        df = self._mapped_frame(cfg, rows)
+        df = cast_limit_board(df, board_type, trade_date)
+        # 单位归一: 契约一律小数制, 源声明 percent 时 /100; 未声明按小数制原样透传
+        # (不猜: 板块级/情绪级行的 change_pct 截面中位数判定不可靠)。
+        if cfg.pct_unit is None:
+            logger.warning(
+                "custom limit_board (%s) 未声明 pct_unit: change_pct/turnover_rate/amplitude "
+                "按小数制原样透传 (0.0366 = 3.66%%); 若上游是百分制请声明 pct_unit: percent",
+                self.name,
+            )
+        return _normalize_pct_units(
+            df,
+            pct_unit=cfg.pct_unit or "decimal",
+            transformed_cols=frozenset(cfg.transforms) & set(_PCT_COLUMNS),
+        )
+
+    def get_market_events(
+        self,
+        trade_date: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> pl.DataFrame:
+        """拉取盘面梳理事件流 (涨停复盘/一字板/炸板回封等标签)。
+
+        market_events 只有一块板 (不分 board_type, 那是 limit_board 的概念),
+        一次请求取 limit 条, offset 用于翻页; trade_date 缺省由上游取最新。
+
+        YAML 源可用 datasets.market_events.params 固定分页/日期参数, 本方法的
+        入参优先 (调用方明确要哪一段)。
+        """
+        cfg = self._dataset("market_events")
+        extra_params = {**cfg.params, "limit": limit, "offset": offset}
+        extra_body = {**cfg.body, "limit": limit, "offset": offset}
+        if trade_date:
+            extra_params["trade_date"] = trade_date
+            extra_body["trade_date"] = trade_date
+        rows = self._request_rows(
+            cfg,
+            override_params=extra_params,
+            override_body=extra_body,
+        )
+        df = self._mapped_frame(cfg, rows)
+        return cast_market_events(df, trade_date)
+
     @classmethod
     def _normalize_minute(cls, df: pl.DataFrame) -> pl.DataFrame:
         """把映射后的 df 规范成 minute canonical 列。"""
@@ -421,9 +525,30 @@ class GenericHTTPProvider:
                 start_time=start_time,
                 end_time=end_time,
             )
+        elif dataset == "limit_board":
+            # 涨停板是全市场截面数据, 不按 symbol 取数: 只带 board_type 参数
+            extra = {"board_type": "up"}
+            rows = self._request_rows(
+                cfg,
+                override_params={**cfg.params, **extra},
+                override_body={**cfg.body, **extra},
+            )
+        elif dataset == "market_events":
+            # 盘面事件是全市场事件流, 不按 symbol 取数: 只带分页参数
+            extra = {"limit": 100, "offset": 0}
+            rows = self._request_rows(
+                cfg,
+                override_params={**cfg.params, **extra},
+                override_body={**cfg.body, **extra},
+            )
         else:
             rows = self._request_rows(cfg, symbols=test_symbols)
         df = self._mapped_frame(cfg, rows)
+        if dataset == "limit_board":
+            # 试拉结果按 canonical 形状回显 (前端看到的列名/类型与正式取数一致)
+            df = cast_limit_board(df, "up")
+        elif dataset == "market_events":
+            df = cast_market_events(df)
         return {
             "provider": self.name,
             "dataset": dataset,
