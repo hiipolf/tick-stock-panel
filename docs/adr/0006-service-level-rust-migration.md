@@ -122,6 +122,72 @@ ADR does not require breaking changes for this scope. The uvicorn real-data
 end-to-end verification (Spec §"Testing Decisions") is gated on live
 minute-data population by `MinuteRefreshService` at runtime.
 
+#### Path A-5 §"5 段" footnote (in-place, 2026-10-20 T05 closure)
+
+Path A-5 (second **multi-kernel** service-level migration: `run_regime_batch`
++ 2 helpers → 2 Rust kernels, **multi-batch daily-grain**) follows the same
+5 段 seam contract as Path A-4, with 3 refinements:
+
+1. **Multi-batch daily-grain orchestration**: each batch is independently
+   kernelized (kernel 1 IO → Python pipeline → kernel 2 aggregation) and the
+   cross-batch `pl.concat(..., how="vertical_relaxed")` stays in **Python**
+   (Spec 0005 Q6). The 5 段 contract is unchanged — only the *number* of
+   kernel calls scales with the batch count.
+2. **Per-batch kernel dispatch is fully wired** (unlike Path A-4's
+   "T04 simplification flag" deferral): Path A-5's T03 fixture has real
+   enriched-daily data, so the T04 seam tests exercise the **full** algorithm
+   path, not a short-circuit. The Python pipeline
+   (`compute_indicators` + `compute_limit_signals` + `with_prev_consecutive`)
+   stays in Python per Spec 0005 Q3=a — the heavy Polars expression chain is
+   not a service-level seam candidate.
+3. **Fail-safe: kernel-empty → Python reference fallback**: when the kernel
+   path returns no rows, `run_regime_batch` falls back to the Python reference
+   path. A kernel that silently returns empty must never wipe the persisted
+   regime history. This keeps the 5 段 contract's "adapter owns correctness,
+   kernel owns compute" split intact.
+
+**Real-data evidence (2026-10-20 T05 closure)**: `run_regime_batch` against the
+real repository over 2025-01-01 .. 2025-12-31 (243 trading days → 5 batches):
+Rust kernel path (243, 30) in 3.9 s vs Python reference path (243, 30) in
+7.2 s — **0 cell mismatches** across 243 rows × 30 columns, ~1.85× faster.
+This is the first Path A migration whose real-data multi-batch path was
+verified **cell-for-cell** against the Python reference (Path A-3 / Path A-4
+were verified on single-day / short-circuit fixtures only).
+
+**HTTP-level evidence (2026-10-20 T05 closure)**: the admin write path
+`POST /api/regime/recompute` was exercised for real over uvicorn (170 trading
+days → 2 batches, 200 OK, 3.3 s, clean in-place upsert of 242 rows). Running
+the same request a second time with the kernels force-disabled **inside the
+server process** produced a **byte-identical persisted artifact** (242 dates ×
+31 columns = 7 502 cells, 0 mismatches) — i.e. the seam contract holds at the
+persistence boundary, not just in memory. Note for future runs: the live
+`regime_history` values legitimately differ from an older production file
+whenever the underlying enriched partitions / instruments snapshot have been
+re-published since (all 1 696 enriched partitions were re-published 7 minutes
+after the compared file was computed) — check partition mtimes before
+attributing a diff to the kernel path.
+
+#### Path A-5 kernel schema + dtype flags (T05 closure)
+
+- **Kernel 2 output schema is 23 columns, not 16** (Spec 0005 §"Implementation
+  Decisions" kernel 2 step 3 said 14 agg + `ma20_above_pct` + `index_pct`).
+  T01's research doc contained no `ladder` reference, so the 7 梯队 (ladder)
+  aggregations (`first_board` / `ge2_count` / `ge3_count` / `ge5_count` /
+  `rungs_filled` / `promo_pool` / `promo_ok`) were missed — but they live in the
+  SAME `group_by("date").agg(...)` block as the 14 base aggs
+  (`market_phase.ladder_daily_aggs()` + `ladder_promo_aggs()`). T04 extended
+  kernel 2 to a true 1:1 port of that group_by block. **Spec 0005 wording
+  corrected** (see its §"Acceptance Checklist" T04 row).
+- **Date-typed `date` column**: the live enriched-daily parquet stores
+  `date: Date` (not `String`). Kernels that filter or group by `date` must
+  cast to String for the comparison key (ISO 8601 lexicographic ==
+  chronological) and — for output — cast back to the input dtype so the kernel
+  output is dtype-identical to the Python reference.
+- **`HashMap<String, f64>` kernel parameter**: PyO3 0.29.3's universal
+  `FromPyObject` for `HashMap` requires `str` keys, so a Python-side map keyed
+  by `datetime.date` must be converted to ISO 8601 strings at the adapter
+  boundary.
+
 ---
 
 ### 14 个 grill-with-docs 决策 (Round 1-4 全部走推荐)
