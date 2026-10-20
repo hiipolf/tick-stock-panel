@@ -1,7 +1,7 @@
 //! `tf_rs_indicators` — Python extension module exposing indicator kernels.
 //!
-//! **Status: Path A — service-level migration in flight (ADR-0001, ADR-0006, Spec 0003/0004).**
-//! Fourteen functions registered today:
+//! **Status: Path A — service-level migration in flight (ADR-0001, ADR-0006, Spec 0003/0004/0005).**
+//! Sixteen functions registered today:
 //!   - `sum_close(df) -> df` — hello-world seam (kept; the dual-track
 //!     `backend/tests/test_rs_indicators_seam.py` still exercises it)
 //!   - `support_resistance(df, bins) -> df` — production port of
@@ -26,10 +26,14 @@
 //!     `prev_daily_close_kernel`, `minute_pcts_kernel`, `sector_flow_kernel`,
 //!     `per_bucket_reduce_kernel`, `timeline_kernel`, `cross_events_kernel`,
 //!     `rank_for_mode_kernel`.
+//!   - 2 Path A-5 kernels (Spec 0005, Ticket 02) — `compute_batch_kernel`,
+//!     `aggregate_daily_kernel` (multi-batch daily-grain migration of
+//!     `regime_builder._compute_batch` + `_aggregate_daily`).
 
 use pyo3::prelude::*;
 
 mod services_market_overview;
+mod services_regime;
 mod services_sector_rotation;
 mod sum;
 mod levels;
@@ -41,7 +45,7 @@ mod extreme_levels;
 /// `extreme_levels.rs`, `services_market_overview/{top_rows,pct_band_rows,
 /// dimension_rank}.rs`, `services_sector_rotation/{bare,prev_daily_close,
 /// minute_pcts,sector_flow,per_bucket_reduce,timeline,cross_events,
-/// rank_for_mode}.rs`).
+/// rank_for_mode}.rs`, `services_regime/{compute_batch,aggregate_daily}.rs`).
 #[pymodule]
 fn tf_rs_indicators(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sum::sum_close, m)?)?;
@@ -59,6 +63,9 @@ fn tf_rs_indicators(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(services_sector_rotation::timeline_kernel, m)?)?;
     m.add_function(wrap_pyfunction!(services_sector_rotation::cross_events_kernel, m)?)?;
     m.add_function(wrap_pyfunction!(services_sector_rotation::rank_for_mode_kernel, m)?)?;
+    // Path A-5 — Spec 0005 §"2 Rust kernels"
+    m.add_function(wrap_pyfunction!(services_regime::compute_batch_kernel, m)?)?;
+    m.add_function(wrap_pyfunction!(services_regime::aggregate_daily_kernel, m)?)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }

@@ -376,28 +376,32 @@ backend/tests/fixtures/regime_builder_5d/       # NEW: 5d × 30 sym daily fixtur
 - [x] No production kernel implementation (defer to T02); example synthesizes
       surrogate DataFrames (parquet IO deferred to T02)
 
-**Ticket 02 (kernel) — TODO 2026-10-19 (TBD commit):**
+**Ticket 02 (kernel) — DONE 2026-10-20 (commit TBD):**
 
-- [ ] 2 production kernels in
+- [x] 2 production kernels in
       `crates/indicators/src/services_regime/{compute_batch,aggregate_daily}.rs`
       (each uses T01's verified production signatures: `PathBuf` + 3 scalars
       for kernel 1; `PyDataFrame` + `HashMap<String, f64>` for kernel 2)
-- [ ] `services_regime/mod.rs` subdir + 2 `wrap_pyfunction!` registrations in
+- [x] `services_regime/mod.rs` subdir + 2 `wrap_pyfunction!` registrations in
       `crates/indicators/src/lib.rs` (total cdylib = **16 functions**: 1 hello-world
       `sum_close` + 2 Path A-1/2 + 3 Path A-3 + 8 Path A-4 + 2 Path A-5)
-- [ ] 8 `#[cfg(test)] mod tests` per Spec 0005 §"Test plan" (4 per kernel:
-      kernel 1 = smoke / warmup-boundary / missing-parquet-graceful /
-      instruments-missing-graceful; kernel 2 = smoke / multi-day /
-      strong_pct-boundary / ma20_above_pct-edge)
-- [ ] `cargo test -p tf-rs-indicators --lib services_regime` **8/8 pass**
-- [ ] `cargo test --workspace --lib` all green — **46 tests total** (38 Path
-      A-1/2/3/4 + 8 Path A-5, no regression)
-- [ ] `maturin develop --release` rebuilds wheel (Path A-4's .pyd 25,510,912 bytes
+- [x] 9 `#[cfg(test)] mod tests` (T01 planned 4+4=8; **NO SEMANTIC CHANGE
+      amendment** — kernel 1 added a 5th test `subtract_days_arithmetic_sanity`
+      covering the date-arithmetic helper used by the warmup-start calc per
+      Spec 0005 §"Implementation Decisions" item 2; kernel 2 = 4 tests:
+      smoke_one_day_three_stocks / multi_day_three_days_three_stocks_avg_pct /
+      strong_pct_threshold_boundary_inclusive /
+      ma20_above_pct_edge_finite_pairs_subset)
+- [x] `cargo test -p tf-rs-indicators --lib services_regime` **9/9 pass**
+- [x] `cargo test --workspace --lib` all green — **47 tests total** (38 Path
+      A-1/2/3/4 + 9 Path A-5, no regression; +1 vs T01 plan due to date-arithmetic
+      sanity test)
+- [x] `maturin develop --release` rebuilds wheel (Path A-4's .pyd 25,510,912 bytes
       + ~3-5 MB for Path A-5's 2 kernels); Python `import tf_rs_indicators`
       exposes **16 functions**
-- [ ] Smoke-test both kernels via synthetic fixture (`.scratch/smoke_test_path_a5.py`):
+- [x] Smoke-test both kernels via synthetic fixture (`.scratch/smoke_test_path_a5.py`):
       2/2 pass; each kernel returns its declared schema with documented column types
-- [ ] No `Cargo.toml` feature flag changes; `Cargo.lock` unchanged (reused
+- [x] No `Cargo.toml` feature flag changes; `Cargo.lock` unchanged (reused
       workspace `polars` + `pyo3` + `pyo3-polars`)
 
 **Ticket 03 (fixture) — TODO 2026-10-19 (TBD commit):**
