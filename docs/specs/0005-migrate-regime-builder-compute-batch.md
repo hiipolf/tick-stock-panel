@@ -83,7 +83,7 @@ The Python fallback (when `tf_rs_indicators` is unavailable) executes the same 7
 3. As a daily pipeline user, I want `run_regime_batch` called via the same `run_regime_batch(repo, start, end)` entry point, so that the daily report's 市场环境聚合 section uses the Rust kernels when the wheel is installed.
 4. As a CI tester, I want `pytest -k regime_builder` to pass on a fresh box without Rust toolchain, so that CI doesn't need to install Rust + cargo + maturin to verify the Python fallback.
 5. As a CI tester, I want `pytest -k regime_builder_seam` to pass on a dev box with Rust + wheel installed, so that the 5-day × 30-symbol frozen fixture parity bit-identical verification catches any Rust kernel drift.
-6. As a 后续 service-level 作者 (`mining_candidates._scan_*` etc.), I want Path A-5's multi-batch seam template + fixture template + dual-track testing scaffold to be reusable, so that Path A-6+ doesn't need a fresh grill cycle.
+6. As a 后续 service-level 作者 (`repository._scan_daily_batch` / `matrix._scan_matrix_values` etc.), I want Path A-5's multi-batch seam template + fixture template + dual-track testing scaffold to be reusable, so that Path A-6+ doesn't need a fresh grill cycle.
 7. As a maintainer, I want `run_regime_batch` public signature unchanged, so that 15+ existing pytest tests at `backend/tests/test_regime_builder.py` and the daily pipeline + `detect_stale_dates` + `compute_regime_incremental` callers continue to work without modification.
 8. As a Rust contributor, I want 2 kernels in `crates/indicators/src/services_regime/` subdirectory, so that the module layout mirrors Path A-3 + Path A-4 subdir pattern and avoids the `crates/{factors,signals,shared}/` placeholder crates.
 9. As a maintainer of vendored Polars (TF-RS-1), I want kernels to depend only on the `polars` Rust crate features already vendored, so that Path A-6+ doesn't trigger a vendored patch cascade.
@@ -252,7 +252,12 @@ backend/tests/fixtures/regime_builder_5d/       # NEW: 5d × 30 sym daily fixtur
 - `regime_builder.compute_regime_incremental` (incremental refresh — orthogonal to batch compute, separate cycle)
 - `regime_builder.refresh_phase_labels` (post-batch phase labeling — uses different code path)
 - `_score` / `_compute_subscores` (state classification helpers — orthogonal to batch compute)
-- `mining_candidates._scan_*` (Path A-6 target)
+- `mining_candidates._scan_*` (Path A-6 target) — **勘误 2026-10-20**: 该函数名不存在。`backend/app/services/mining_candidates.py` 里**没有任何 `_scan_*` 函数**(只有 `_load_candidate` / `_read_artifact` / `_validate_*` / `_publish_or_verify_source` 等校验与发布辅助, 主体是 IO + 校验, 非批量计算)。真实的 `_scan_*` 家族是:
+  - `backend/app/tickflow/repository.py::_scan_daily_symbol` / `_scan_daily_batch` / `_scan_index_daily_symbol` / `_scan_etf_daily_symbol` — 多标的日 K parquet 扫描 + 列子集(与 Path A-5 kernel 1 同构)
+  - `backend/app/backtest/matrix.py::_scan_matrix_values` — 因子矩阵取值
+  - `backend/app/api/data.py::_scan_dir_stats` / `_scan_dir_recursive` — 文件系统统计(非计算)
+  - `backend/app/services/regime_builder.py::_scan_enriched_fallback` — Path A-5 已用的 seam
+  Path A-6 的具体选型见 `docs/PATH-SURVEY.md`(ADR-0001 第 77 行挂着的待补文档, 2026-10-20 补上)。
 - `regime_history.parquet` schema changes (Path A-5 preserves existing columns)
 - The Polars expression chain inside `compute_indicators` (per Q3=a, kept Python — too verbose for 1:1 Rust port)
 - `compute_limit_signals` Polars expression chain (per Q3=a, kept Python)
@@ -278,7 +283,7 @@ backend/tests/fixtures/regime_builder_5d/       # NEW: 5d × 30 sym daily fixtur
   5. **Path A-5 `run_regime_batch` + 1 helper** — this spec
   6. Path A-6+ reuse Path A-5's multi-batch + multi-kernel seam template
 
-- **Path A-6+ reuse**: when `mining_candidates._scan_*` gets migrated, the multi-batch daily-grain + multi-kernel seam template (2-kernel pattern + 5-day fixture template + dual-track testing scaffold) from Path A-5 will be reused directly. New spec/ADR cycle is unnecessary for seam design.
+- **Path A-6+ reuse**: when the next target (selected in `docs/PATH-SURVEY.md` — see the 勘误 note under §"Out of Scope") gets migrated, the multi-batch daily-grain + multi-kernel seam template (2-kernel pattern + 5-day fixture template + dual-track testing scaffold) from Path A-5 will be reused directly. New spec/ADR cycle is unnecessary for seam design.
 
 - **Cross-cl ref**: Spec 0001 / 0002 / 0003 / 0004 cross-ref "Supersedes by Service-level Path A (Spec 0005 / ADR-0006 + Path A-5 footnote)". ADR-0006 cross-ref "Multi-batch daily-grain extension — Spec 0005 (Path A-5)".
 
